@@ -6,34 +6,33 @@ import CardModal from './CardModal';
 import TableView from './TableView';
 import CalendarView from './CalendarView';
 import AutomationModal from './AutomationModal';
-
-const AVATAR_COLORS = ['#8b5cf6', '#3b82f6', '#22c55e', '#f97316', '#ec4899', '#14b8a6'];
-function avatarColor(name: string): string {
-  let hash = 0;
-  for (const ch of name) hash = (hash * 31 + ch.charCodeAt(0)) | 0;
-  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
-}
+import { avatarColor, btnGhost, btnSmall, emptyState, headerBtn, mainHeader, viewTitle } from '../ui';
 
 function CardBadges({ card }: { card: Card }) {
   const members = (card.member_names ?? '').split(',').filter(Boolean);
   const hasChecklist = (card.checklist_total ?? 0) > 0;
   const today = new Date().toISOString().slice(0, 10);
-  const dueClass = card.completed ? 'done' : card.due_date && card.due_date < today ? 'overdue'
-    : card.due_date === today ? 'due-soon' : '';
+  const badgeBase = 'inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11.5px]';
+  const dueClass = card.completed ? `${badgeBase} bg-ok/15 text-ok`
+    : card.due_date && card.due_date < today ? `${badgeBase} bg-danger/15 text-danger`
+    : card.due_date === today ? `${badgeBase} bg-board/15 text-board`
+    : `${badgeBase} bg-ink text-dim`;
   if (!card.due_date && !hasChecklist && members.length === 0 && !card.completed) return null;
   return (
-    <div className="card-badges">
-      {card.completed ? <span className="badge done">✓ Hecha</span> : null}
-      {card.due_date && <span className={`badge ${dueClass}`}>🕓 {card.due_date}</span>}
+    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+      {card.completed ? <span className={`${badgeBase} bg-ok/15 text-ok`}>✓ Hecha</span> : null}
+      {card.due_date && <span className={dueClass}>🕓 {card.due_date}</span>}
       {hasChecklist && (
-        <span className={`badge ${card.checklist_done === card.checklist_total ? 'checklist-done' : ''}`}>
+        <span className={`${badgeBase} bg-ink ${card.checklist_done === card.checklist_total ? 'text-ok' : 'text-dim'}`}>
           ☑ {card.checklist_done}/{card.checklist_total}
         </span>
       )}
       {members.length > 0 && (
-        <span className="member-avatars">
-          {members.slice(0, 3).map((m) => (
-            <span key={m} className="mini-avatar" style={{ background: avatarColor(m) }} title={m}>
+        <span className="ml-auto flex">
+          {members.slice(0, 3).map((m, i) => (
+            <span key={m} title={m}
+              className={`flex h-5 w-5 items-center justify-center rounded-full border-2 border-raised text-[10px] font-bold text-ink ${i > 0 ? '-ml-1.5' : ''}`}
+              style={{ background: avatarColor(m) }}>
               {m.slice(0, 1).toUpperCase()}
             </span>
           ))}
@@ -50,12 +49,13 @@ function AddForm({ placeholder, onSubmit, onCancel }: {
 }) {
   const [value, setValue] = useState('');
   return (
-    <form className="inline-form" onSubmit={(e) => { e.preventDefault(); if (value.trim()) onSubmit(value.trim()); }}>
+    <form className="flex flex-col gap-1.5 px-2.5 pb-2.5 pt-1" onSubmit={(e) => { e.preventDefault(); if (value.trim()) onSubmit(value.trim()); }}>
       <input autoFocus placeholder={placeholder} value={value} onChange={(e) => setValue(e.target.value)}
-        onKeyDown={(e) => e.key === 'Escape' && onCancel()} />
-      <div className="row">
-        <button className="btn-small" type="submit">Añadir</button>
-        <button className="btn-cancel" type="button" onClick={onCancel}>Cancelar</button>
+        onKeyDown={(e) => e.key === 'Escape' && onCancel()}
+        className="rounded-lg border border-accent bg-ink px-2.5 py-2 text-[13px] outline-none" />
+      <div className="flex gap-1.5">
+        <button className={btnSmall} type="submit">Añadir</button>
+        <button className="px-2 py-1.5 text-[13px] text-dim hover:text-fg" type="button" onClick={onCancel}>Cancelar</button>
       </div>
     </form>
   );
@@ -67,7 +67,8 @@ function DropZone({ active, over, onDrop, onDragOver, onDragLeave }: {
 }) {
   if (!active) return null;
   return (
-    <div className={`drop-zone ${over ? 'over' : ''}`}
+    <div
+      className={`rounded transition-all duration-100 ${over ? 'h-10 border border-dashed border-board bg-board/10' : '-my-1 h-1'}`}
       onDragOver={(e) => { e.preventDefault(); onDragOver(); }}
       onDragLeave={onDragLeave}
       onDrop={(e) => { e.preventDefault(); onDrop(); }}
@@ -123,37 +124,41 @@ export default function BoardView({ boardId, initialCardId }: { boardId: number;
     load();
   }
 
-  if (!board) return <div className="empty-state">Tablero no encontrado.</div>;
+  if (!board) return <div className={emptyState}>Tablero no encontrado.</div>;
+
+  const viewTab = (active: boolean) =>
+    `px-3 py-1.5 text-xs transition-colors ${active ? 'bg-board/10 font-semibold text-board' : 'text-dim hover:text-fg'}`;
 
   return (
     <>
-      <div className="main-header">
-        <h2>▦ {board.name}</h2>
-        <span className="subtitle">{lists.reduce((n, l) => n + l.cards.length, 0)} tarjetas</span>
-        <div className="view-switcher">
-          <button className={view === 'kanban' ? 'active' : ''} onClick={() => setView('kanban')}>▦ Tablero</button>
-          <button className={view === 'table' ? 'active' : ''} onClick={() => setView('table')}>☰ Tabla</button>
-          <button className={view === 'calendar' ? 'active' : ''} onClick={() => setView('calendar')}>📅 Calendario</button>
+      <div className={mainHeader}>
+        <h2 className={viewTitle}><span className="text-board">▦</span> {board.name}</h2>
+        <span className="text-[13px] text-dim">{lists.reduce((n, l) => n + l.cards.length, 0)} tarjetas</span>
+        <div className="ml-auto flex overflow-hidden rounded-lg border border-edge bg-panel">
+          <button className={viewTab(view === 'kanban')} onClick={() => setView('kanban')}>▦ Tablero</button>
+          <button className={viewTab(view === 'table')} onClick={() => setView('table')}>☰ Tabla</button>
+          <button className={viewTab(view === 'calendar')} onClick={() => setView('calendar')}>📅 Calendario</button>
         </div>
-        <button className="header-btn" onClick={() => setShowRules(true)}>⚙ Automatización</button>
+        <button className={headerBtn} onClick={() => setShowRules(true)}>⚙ Automatización</button>
       </div>
-      <div className="main-body">
+      <div className="flex-1 overflow-auto">
         {view === 'table' && <TableView lists={lists} onOpenCard={setOpenCardId} onChanged={load} />}
         {view === 'calendar' && <CalendarView lists={lists} onOpenCard={setOpenCardId} />}
-        {view === 'kanban' && <div className="board">
+        {view === 'kanban' && <div className="flex min-h-full items-start gap-3.5 p-4.5">
           {lists.map((list) => (
-            <div key={list.id} className="kanban-list"
+            <div key={list.id}
+              className="flex max-h-[calc(100vh-110px)] w-70 shrink-0 flex-col rounded-xl border border-edge bg-panel"
               onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => {
                 e.preventDefault();
                 if (dragging && dropTarget === null) moveCard(dragging, list.id, list.cards.length);
                 setDragging(null); setDropTarget(null);
               }}>
-              <div className="kanban-list-header">
-                <span>{list.name} <span className="count">· {list.cards.length}</span></span>
-                <button className="btn-ghost" onClick={() => removeList(list)} title="Eliminar lista">✕</button>
+              <div className="flex items-center justify-between px-3.5 py-3 text-[13.5px] font-semibold">
+                <span>{list.name} <span className="font-normal text-dim">· {list.cards.length}</span></span>
+                <button className={btnGhost} onClick={() => removeList(list)} title="Eliminar lista">✕</button>
               </div>
-              <div className="kanban-cards">
+              <div className="flex min-h-8 flex-col gap-2 overflow-y-auto px-2.5 pb-2.5 pt-1">
                 {list.cards.map((card, i) => {
                   const labels: string[] = JSON.parse(card.labels || '[]');
                   const zoneKey = `${list.id}:${i}`;
@@ -163,20 +168,21 @@ export default function BoardView({ boardId, initialCardId }: { boardId: number;
                         onDragOver={() => setDropTarget(zoneKey)}
                         onDragLeave={() => setDropTarget(null)}
                         onDrop={() => { if (dragging) moveCard(dragging, list.id, i); setDragging(null); setDropTarget(null); }} />
-                      <div className={`kanban-card ${dragging?.id === card.id ? 'dragging' : ''}`}
+                      <div
+                        className={`cursor-grab rounded-lg border border-edge bg-raised px-3 py-2.5 transition-colors hover:border-board ${dragging?.id === card.id ? 'opacity-40' : ''}`}
                         draggable
                         onDragStart={() => setDragging(card)}
                         onDragEnd={() => { setDragging(null); setDropTarget(null); }}
                         onClick={() => setOpenCardId(card.id)}>
                         {labels.length > 0 && (
-                          <div className="labels">
-                            {labels.map((l) => <span key={l} className="label-pill" style={{ background: LABEL_COLORS[l] ?? '#666' }} />)}
+                          <div className="mb-1.5 flex gap-1">
+                            {labels.map((l) => <span key={l} className="h-1.5 w-7 rounded-full" style={{ background: LABEL_COLORS[l] ?? '#666' }} />)}
                           </div>
                         )}
-                        <div style={card.completed ? { textDecoration: 'line-through', color: 'var(--text-dim)' } : undefined}>
+                        <div className={card.completed ? 'text-dim line-through' : ''}>
                           {card.title}
                         </div>
-                        {card.description && <div className="card-meta"><span>≡ descripción</span></div>}
+                        {card.description && <div className="mt-1.5 flex gap-2.5 text-xs text-dim"><span>≡ descripción</span></div>}
                         <CardBadges card={card} />
                       </div>
                     </div>
@@ -190,16 +196,19 @@ export default function BoardView({ boardId, initialCardId }: { boardId: number;
               {addingCardTo === list.id ? (
                 <AddForm placeholder="Título de la tarjeta…" onSubmit={(t) => addCard(list.id, t)} onCancel={() => setAddingCardTo(null)} />
               ) : (
-                <button className="add-card-btn" onClick={() => setAddingCardTo(list.id)}>+ Añadir tarjeta</button>
+                <button className="px-3.5 pb-3 pt-2 text-left text-[13px] text-dim transition-colors hover:text-fg"
+                  onClick={() => setAddingCardTo(list.id)}>+ Añadir tarjeta</button>
               )}
             </div>
           ))}
           {addingList ? (
-            <div className="kanban-list" style={{ width: 280 }}>
+            <div className="w-70 shrink-0 rounded-xl border border-edge bg-panel pt-2">
               <AddForm placeholder="Nombre de la lista…" onSubmit={addList} onCancel={() => setAddingList(false)} />
             </div>
           ) : (
-            <button className="add-list-btn" onClick={() => setAddingList(true)}>+ Añadir lista</button>
+            <button
+              className="w-70 shrink-0 rounded-xl border border-dashed border-edge bg-panel/70 p-3.5 text-left text-[13px] text-dim transition-colors hover:border-board hover:text-fg"
+              onClick={() => setAddingList(true)}>+ Añadir lista</button>
           )}
         </div>}
       </div>

@@ -3,6 +3,7 @@ import { get, post, patch, del } from '../api';
 import type { Backlink, Card, Channel, ChecklistItem, LinkedNote, NoteMeta, User } from '../types';
 import { LABEL_COLORS } from '../types';
 import { navigate } from '../App';
+import { btnDanger, btnGhost, btnSmall, chip, chipAdd, chipRemove, inputBase, modalBackdrop, modalBox, modalClose, sectionTitle, selectBase } from '../ui';
 
 interface CardDetail {
   card: Card;
@@ -110,145 +111,148 @@ export default function CardModal({ cardId, onClose }: { cardId: number; onClose
   }
 
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal">
-        <div className="modal-title-row">
+    <div className={modalBackdrop} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className={modalBox}>
+        <div className="flex items-start justify-between gap-3">
           <input value={title} onChange={(e) => setTitle(e.target.value)}
-            onBlur={() => title.trim() && title !== detail.card.title && save({ title })} />
-          <button className="modal-close" onClick={onClose}>✕</button>
+            onBlur={() => title.trim() && title !== detail.card.title && save({ title })}
+            className="flex-1 rounded-lg border border-transparent bg-transparent px-2 py-1 font-display text-[19px] font-bold outline-none transition-colors focus:border-accent focus:bg-ink" />
+          <button className={modalClose} onClick={onClose}>✕</button>
         </div>
-        <div className="subtitle" style={{ color: 'var(--text-dim)', fontSize: 13, marginTop: -10 }}>
-          en la lista <strong>{detail.card.list_name}</strong>
+        <div className="-mt-2.5 px-2 text-[13px] text-dim">
+          en la lista <strong className="text-fg">{detail.card.list_name}</strong>
         </div>
 
-        <div className="modal-section">
-          <h4>Estado y vencimiento</h4>
-          <div className="chip-row">
-            <label className="chip" style={{ cursor: 'pointer' }}>
+        <div>
+          <h4 className={sectionTitle}>Estado y vencimiento</h4>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className={`${chip} accent-ok`}>
               <input type="checkbox" checked={!!detail.card.completed}
-                onChange={(e) => save({ completed: e.target.checked })}
-                style={{ accentColor: 'var(--green)' }} />
+                onChange={(e) => save({ completed: e.target.checked })} />
               Completada
             </label>
             <input type="date" value={detail.card.due_date ?? ''}
               onChange={(e) => save({ due_date: e.target.value || null })}
-              style={{
-                background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 7,
-                padding: '5px 10px', fontSize: 13, outline: 'none', colorScheme: 'dark',
-              }} />
+              className="rounded-lg border border-edge bg-ink px-2.5 py-1.5 text-[13px] outline-none focus:border-accent" />
             {detail.card.due_date && (
-              <button className="btn-ghost" onClick={() => save({ due_date: null })}>Quitar fecha</button>
+              <button className={btnGhost} onClick={() => save({ due_date: null })}>Quitar fecha</button>
             )}
           </div>
         </div>
 
-        <div className="modal-section">
-          <h4>Etiquetas</h4>
-          <div className="label-picker">
+        <div>
+          <h4 className={sectionTitle}>Etiquetas</h4>
+          <div className="flex flex-wrap gap-2">
             {Object.entries(LABEL_COLORS).map(([name, color]) => (
               <button key={name} title={name}
-                className={`label-swatch ${labels.includes(name) ? 'selected' : ''}`}
+                className={`h-6 w-11 rounded-md border-2 transition-all ${labels.includes(name) ? 'border-fg opacity-100' : 'border-transparent opacity-55 hover:opacity-80'}`}
                 style={{ background: color }}
                 onClick={() => toggleLabel(name)} />
             ))}
           </div>
         </div>
 
-        <div className="modal-section">
-          <h4>Descripción <span style={{ textTransform: 'none', letterSpacing: 0 }}>(admite [[wiki-links]] a notas)</span></h4>
+        <div>
+          <h4 className={sectionTitle}>Descripción <span className="normal-case tracking-normal">(admite [[wiki-links]] a notas)</span></h4>
           <textarea value={description} onChange={(e) => setDescription(e.target.value)}
             onBlur={() => description !== detail.card.description && save({ description })}
-            placeholder="Añade una descripción…" />
+            placeholder="Añade una descripción…"
+            className="min-h-28 w-full resize-y rounded-lg border border-edge bg-ink px-3 py-2.5 leading-relaxed outline-none transition-colors focus:border-accent" />
         </div>
 
-        <div className="modal-section">
-          <h4>Checklist {detail.checklist.length > 0 && `(${detail.checklist.filter((i) => i.done).length}/${detail.checklist.length})`}</h4>
+        <div>
+          <h4 className={sectionTitle}>Checklist {detail.checklist.length > 0 && `(${detail.checklist.filter((i) => i.done).length}/${detail.checklist.length})`}</h4>
           {detail.checklist.length > 0 && (
-            <div className="checklist-progress">
-              <div className="fill" style={{ width: `${(detail.checklist.filter((i) => i.done).length / detail.checklist.length) * 100}%` }} />
+            <div className="mb-2.5 h-1.5 overflow-hidden rounded-full bg-ink">
+              <div className="h-full rounded-full bg-ok transition-all duration-200"
+                style={{ width: `${(detail.checklist.filter((i) => i.done).length / detail.checklist.length) * 100}%` }} />
             </div>
           )}
           {detail.checklist.map((item) => (
-            <div key={item.id} className="checklist-item">
-              <input type="checkbox" checked={!!item.done} onChange={() => toggleItem(item)} />
-              <span className={`text ${item.done ? 'done' : ''}`}>{item.text}</span>
-              <button className="remove" onClick={() => removeItem(item)}>✕</button>
+            <div key={item.id} className="group flex items-center gap-2 py-1">
+              <input type="checkbox" checked={!!item.done} onChange={() => toggleItem(item)} className="h-4 w-4 accent-accent" />
+              <span className={`flex-1 ${item.done ? 'text-dim line-through' : ''}`}>{item.text}</span>
+              <button className="text-dim opacity-0 transition-opacity hover:text-danger group-hover:opacity-100"
+                onClick={() => removeItem(item)}>✕</button>
             </div>
           ))}
-          <form className="checklist-add" onSubmit={addChecklistItem}>
-            <input placeholder="Añadir elemento…" value={newItem} onChange={(e) => setNewItem(e.target.value)} />
-            <button className="btn-small" type="submit">+</button>
+          <form className="mt-1.5 flex gap-1.5" onSubmit={addChecklistItem}>
+            <input placeholder="Añadir elemento…" value={newItem} onChange={(e) => setNewItem(e.target.value)}
+              className={`flex-1 ${inputBase} py-1.5 text-[13px]`} />
+            <button className={btnSmall} type="submit">+</button>
           </form>
         </div>
 
-        <div className="modal-section">
-          <h4>Miembros</h4>
-          <div className="chip-row">
+        <div>
+          <h4 className={sectionTitle}>Miembros</h4>
+          <div className="flex flex-wrap items-center gap-2">
             {detail.members.map((m) => (
-              <span key={m.id} className="chip">
+              <span key={m.id} className={chip}>
                 @{m.username}
-                <button className="remove" onClick={() => removeMember(m.id)}>✕</button>
+                <button className={chipRemove} onClick={() => removeMember(m.id)}>✕</button>
               </span>
             ))}
             {pickingMember ? (
-              <select className="note-select" autoFocus defaultValue=""
+              <select className={selectBase} autoFocus defaultValue=""
                 onChange={(e) => e.target.value && addMember(Number(e.target.value))}
                 onBlur={() => setPickingMember(false)}>
                 <option value="" disabled>Elegir usuario…</option>
                 {allUsers.map((u) => <option key={u.id} value={u.id}>@{u.username}</option>)}
               </select>
             ) : (
-              <button className="chip chip-add" onClick={startPickingMember}>+ Asignar miembro</button>
+              <button className={chipAdd} onClick={startPickingMember}>+ Asignar miembro</button>
             )}
           </div>
         </div>
 
-        <div className="modal-section">
-          <h4>Notas vinculadas</h4>
-          <div className="chip-row">
+        <div>
+          <h4 className={sectionTitle}>Notas vinculadas</h4>
+          <div className="flex flex-wrap items-center gap-2">
             {detail.linkedNotes.map((n) => (
-              <span key={`${n.link_id}-${n.id}`} className="chip" onClick={() => { onClose(); navigate(`/notes/${n.id}`); }}>
-                <span className="icon">◆</span>{n.title}
+              <span key={`${n.link_id}-${n.id}`} className={chip} onClick={() => { onClose(); navigate(`/notes/${n.id}`); }}>
+                <span className="text-note">◆</span>{n.title}
                 {n.kind === 'manual' && (
-                  <button className="remove" onClick={(e) => { e.stopPropagation(); unlinkNote(n.link_id); }}>✕</button>
+                  <button className={chipRemove} onClick={(e) => { e.stopPropagation(); unlinkNote(n.link_id); }}>✕</button>
                 )}
               </span>
             ))}
             {pickingNote ? (
-              <select className="note-select" autoFocus defaultValue=""
+              <select className={selectBase} autoFocus defaultValue=""
                 onChange={(e) => e.target.value && linkNote(Number(e.target.value))}
                 onBlur={() => setPickingNote(false)}>
                 <option value="" disabled>Elegir nota…</option>
                 {allNotes.map((n) => <option key={n.id} value={n.id}>{n.title}</option>)}
               </select>
             ) : (
-              <button className="chip chip-add" onClick={startPickingNote}>+ Vincular nota</button>
+              <button className={chipAdd} onClick={startPickingNote}>+ Vincular nota</button>
             )}
           </div>
         </div>
 
-        <div className="modal-section">
-          <h4>Conversación</h4>
+        <div>
+          <h4 className={sectionTitle}>Conversación</h4>
           {detail.discussion ? (
-            <span className="chip" onClick={() => { onClose(); navigate(`/chat/${detail.discussion!.id}`); }}>
-              <span className="icon">#</span>{detail.discussion.name}
+            <span className={chip} onClick={() => { onClose(); navigate(`/chat/${detail.discussion!.id}`); }}>
+              <span className="text-chat">#</span>{detail.discussion.name}
             </span>
           ) : (
-            <button className="chip chip-add" onClick={openDiscussion}>＃ Abrir canal de discusión</button>
+            <button className={chipAdd} onClick={openDiscussion}>＃ Abrir canal de discusión</button>
           )}
         </div>
 
         {detail.mentions.length > 0 && (
-          <div className="modal-section">
-            <h4>Mencionada en</h4>
-            <div className="chip-row">
+          <div>
+            <h4 className={sectionTitle}>Mencionada en</h4>
+            <div className="flex flex-wrap items-center gap-2">
               {detail.mentions.map((m, i) => (
-                <span key={i} className="chip" onClick={() => {
+                <span key={i} className={chip} onClick={() => {
                   onClose();
                   if (m.source_type === 'message' && m.channel_id) navigate(`/chat/${m.channel_id}`);
                   else if (m.source_type === 'note') navigate(`/notes/${m.source_id}`);
                 }}>
-                  <span className="icon">{m.source_type === 'message' ? '💬' : '◆'}</span>
+                  <span className={m.source_type === 'message' ? 'text-chat' : 'text-note'}>
+                    {m.source_type === 'message' ? '💬' : '◆'}
+                  </span>
                   {(m.label ?? '').slice(0, 60) || '(sin contenido)'}
                 </span>
               ))}
@@ -256,9 +260,9 @@ export default function CardModal({ cardId, onClose }: { cardId: number; onClose
           </div>
         )}
 
-        <div className="modal-footer">
-          <button className="btn-danger" onClick={removeCard}>Eliminar tarjeta</button>
-          <button className="btn-small" onClick={onClose}>Cerrar</button>
+        <div className="flex items-center justify-between">
+          <button className={btnDanger} onClick={removeCard}>Eliminar tarjeta</button>
+          <button className={btnSmall} onClick={onClose}>Cerrar</button>
         </div>
       </div>
     </div>

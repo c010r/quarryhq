@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { get, post, setToken, getToken, connectWs, disconnectWs, onWsEvent } from './api';
 import type { Board, Channel, NoteMeta, User } from './types';
 import BoardView from './views/BoardView';
@@ -6,6 +6,7 @@ import NotesView from './views/NotesView';
 import ChatView from './views/ChatView';
 import GraphView from './views/GraphView';
 import SearchPalette from './views/SearchPalette';
+import { btnPrimary, btnGhost, emptyState, inputBase, sideHeading, sideIcon, sideItem, sideLabel } from './ui';
 
 function useHashRoute(): string[] {
   const [hash, setHash] = useState(location.hash);
@@ -19,6 +20,85 @@ function useHashRoute(): string[] {
 
 export function navigate(path: string) {
   location.hash = path;
+}
+
+// Tres nodos enlazados: tableros (ámbar), notas (violeta) y chat (teal).
+function LinkMark() {
+  return (
+    <svg viewBox="0 0 120 44" className="h-11 w-[120px]" aria-hidden>
+      <line x1="20" y1="30" x2="60" y2="12" stroke="var(--color-edge)" strokeWidth="1.5" />
+      <line x1="60" y1="12" x2="100" y2="30" stroke="var(--color-edge)" strokeWidth="1.5" />
+      <line x1="20" y1="30" x2="100" y2="30" stroke="var(--color-edge)" strokeWidth="1.5" strokeDasharray="4 3" />
+      <circle cx="20" cy="30" r="7" fill="var(--color-board)" />
+      <circle cx="60" cy="12" r="7" fill="var(--color-note)" />
+      <circle cx="100" cy="30" r="7" fill="var(--color-chat)" />
+    </svg>
+  );
+}
+
+// ---------- Google Sign-In ----------
+declare global {
+  interface Window { google?: any }
+}
+
+let gsiScript: Promise<void> | null = null;
+function loadGsi(): Promise<void> {
+  if (window.google?.accounts?.id) return Promise.resolve();
+  gsiScript ??= new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://accounts.google.com/gsi/client';
+    s.async = true;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error('No se pudo cargar Google Sign-In'));
+    document.head.appendChild(s);
+  });
+  return gsiScript;
+}
+
+// Solo aparece si el servidor tiene GOOGLE_CLIENT_ID configurado
+function GoogleButton({ onAuth, onError }: { onAuth: (user: User) => void; onError: (msg: string) => void }) {
+  const slot = useRef<HTMLDivElement>(null);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { googleClientId } = await get<{ googleClientId: string | null }>('/api/auth/config');
+        if (!googleClientId || cancelled) return;
+        await loadGsi();
+        if (cancelled || !slot.current) return;
+        window.google.accounts.id.initialize({
+          client_id: googleClientId,
+          callback: async ({ credential }: { credential: string }) => {
+            try {
+              const data = await post<{ token: string; user: User }>('/api/auth/google', { credential });
+              setToken(data.token);
+              onAuth(data.user);
+            } catch (err: any) {
+              onError(err.message);
+            }
+          },
+        });
+        window.google.accounts.id.renderButton(slot.current, {
+          theme: 'filled_black', size: 'large', width: 300, text: 'continue_with',
+        });
+        setReady(true);
+      } catch {
+        // Sin Google el formulario clásico sigue funcionando
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  return (
+    <div className={ready ? 'flex flex-col gap-3.5' : 'hidden'}>
+      <div className="flex items-center gap-3 text-[11px] uppercase tracking-[0.08em] text-dim">
+        <span className="h-px flex-1 bg-edge" />o<span className="h-px flex-1 bg-edge" />
+      </div>
+      <div ref={slot} className="flex justify-center" />
+    </div>
+  );
 }
 
 // ---------- Login ----------
@@ -45,19 +125,25 @@ function Login({ onAuth }: { onAuth: (user: User) => void }) {
   }
 
   return (
-    <div className="login-screen">
-      <form className="login-card" onSubmit={submit}>
-        <h1>⚡ Obstresla</h1>
-        <p className="tagline">Tableros, notas y chat — todo conectado en un solo espacio de trabajo.</p>
-        <input placeholder="Usuario" value={username} onChange={(e) => setUsername(e.target.value)} autoFocus />
-        <input placeholder="Contraseña" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-        {error && <div className="login-error">{error}</div>}
-        <button className="btn-primary" disabled={busy}>
+    <div className="flex h-full items-center justify-center bg-ink [background-image:radial-gradient(ellipse_at_top,#1a1f3a_0%,var(--color-ink)_62%)]">
+      <form onSubmit={submit} className="flex w-[380px] flex-col gap-3.5 rounded-2xl border border-edge bg-panel p-9 shadow-2xl shadow-black/50">
+        <LinkMark />
+        <h1 className="font-display text-[28px] font-extrabold tracking-tight">Obstresla</h1>
+        <p className="mb-1 text-[13px] leading-relaxed text-dim">
+          <span className="font-semibold text-board">Tableros</span>,{' '}
+          <span className="font-semibold text-note">notas</span> y{' '}
+          <span className="font-semibold text-chat">chat</span> — todo conectado en un solo espacio de trabajo.
+        </p>
+        <input className={inputBase} placeholder="Usuario" value={username} onChange={(e) => setUsername(e.target.value)} autoFocus />
+        <input className={inputBase} placeholder="Contraseña" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+        {error && <div className="text-[13px] text-danger">{error}</div>}
+        <button className={btnPrimary} disabled={busy}>
           {mode === 'login' ? 'Entrar' : 'Crear cuenta'}
         </button>
-        <button type="button" className="btn-ghost" onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(''); }}>
+        <button type="button" className={btnGhost} onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(''); }}>
           {mode === 'login' ? '¿No tienes cuenta? Regístrate' : '¿Ya tienes cuenta? Inicia sesión'}
         </button>
+        <GoogleButton onAuth={onAuth} onError={setError} />
       </form>
     </div>
   );
@@ -156,62 +242,82 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
 
   const [section, param] = route;
 
+  const newButton = (onClick: () => void, title: string) => (
+    <button onClick={onClick} title={title} className="px-1 text-[15px] leading-none text-dim transition-colors hover:text-fg">+</button>
+  );
+
   return (
-    <div className="shell">
-      <nav className="sidebar">
-        <div className="sidebar-brand"><span className="logo">⚡</span> Obstresla</div>
-        <button className="sidebar-search" onClick={() => setPaletteOpen(true)}>
-          Buscar en todo… <kbd>Ctrl K</kbd>
+    <div className="flex h-full">
+      <nav className="flex w-48 shrink-0 flex-col overflow-y-auto border-r border-edge bg-panel lg:w-60">
+        <div className="flex items-center gap-2 border-b border-edge p-4 font-display text-[17px] font-bold tracking-tight">
+          <svg viewBox="0 0 24 24" className="h-6.5 w-6.5" aria-hidden>
+            <line x1="5" y1="17" x2="12" y2="6" stroke="var(--color-edge)" strokeWidth="1.5" />
+            <line x1="12" y1="6" x2="19" y2="17" stroke="var(--color-edge)" strokeWidth="1.5" />
+            <circle cx="5" cy="17" r="3.4" fill="var(--color-board)" />
+            <circle cx="12" cy="6" r="3.4" fill="var(--color-note)" />
+            <circle cx="19" cy="17" r="3.4" fill="var(--color-chat)" />
+          </svg>
+          Obstresla
+        </div>
+        <button
+          onClick={() => setPaletteOpen(true)}
+          className="m-3 flex items-center justify-between rounded-lg border border-edge bg-ink px-3 py-2 text-left text-[13px] text-dim transition-colors hover:border-accent"
+        >
+          Buscar en todo…
+          <kbd className="rounded border border-edge bg-raised px-1.5 py-px font-sans text-[11px]">Ctrl K</kbd>
         </button>
 
-        <div className="sidebar-section">
-          <div className="sidebar-heading">Tableros <button onClick={createBoard} title="Nuevo tablero">+</button></div>
+        <div className="px-3 py-1.5">
+          <div className={sideHeading}>Tableros {newButton(createBoard, 'Nuevo tablero')}</div>
           {boards.map((b) => (
-            <button key={b.id} className={`sidebar-item ${section === 'board' && Number(param) === b.id ? 'active' : ''}`}
+            <button key={b.id} className={sideItem(section === 'board' && Number(param) === b.id, 'board')}
               onClick={() => navigate(`/board/${b.id}`)}>
-              <span className="icon">▦</span><span>{b.name}</span>
+              <span className={`${sideIcon} text-board`}>▦</span><span className={sideLabel}>{b.name}</span>
             </button>
           ))}
         </div>
 
-        <div className="sidebar-section">
-          <div className="sidebar-heading">Notas <button onClick={createNote} title="Nueva nota">+</button></div>
+        <div className="px-3 py-1.5">
+          <div className={sideHeading}>Notas {newButton(createNote, 'Nueva nota')}</div>
           {notes.slice(0, 8).map((n) => (
-            <button key={n.id} className={`sidebar-item ${section === 'notes' && Number(param) === n.id ? 'active' : ''}`}
+            <button key={n.id} className={sideItem(section === 'notes' && Number(param) === n.id, 'note')}
               onClick={() => navigate(`/notes/${n.id}`)}>
-              <span className="icon">◆</span><span>{n.title}</span>
+              <span className={`${sideIcon} text-note`}>◆</span><span className={sideLabel}>{n.title}</span>
             </button>
           ))}
           {notes.length > 8 && (
-            <button className="sidebar-item" onClick={() => setPaletteOpen(true)}>
-              <span className="icon">…</span><span>{notes.length - 8} notas más</span>
+            <button className={sideItem(false)} onClick={() => setPaletteOpen(true)}>
+              <span className={sideIcon}>…</span><span className={sideLabel}>{notes.length - 8} notas más</span>
             </button>
           )}
         </div>
 
-        <div className="sidebar-section">
-          <div className="sidebar-heading">Canales <button onClick={createChannel} title="Nuevo canal">+</button></div>
+        <div className="px-3 py-1.5">
+          <div className={sideHeading}>Canales {newButton(createChannel, 'Nuevo canal')}</div>
           {channels.map((c) => (
-            <button key={c.id} className={`sidebar-item ${section === 'chat' && Number(param) === c.id ? 'active' : ''}`}
+            <button key={c.id} className={sideItem(section === 'chat' && Number(param) === c.id, 'chat')}
               onClick={() => navigate(`/chat/${c.id}`)}>
-              <span className="icon">#</span><span>{c.name}</span>
+              <span className={`${sideIcon} text-chat`}>#</span><span className={sideLabel}>{c.name}</span>
             </button>
           ))}
         </div>
 
-        <div className="sidebar-section">
-          <button className={`sidebar-item ${section === 'graph' ? 'active' : ''}`} onClick={() => navigate('/graph')}>
-            <span className="icon">◉</span><span>Grafo de conocimiento</span>
+        <div className="px-3 py-1.5">
+          <button className={sideItem(section === 'graph')} onClick={() => navigate('/graph')}>
+            <span className={sideIcon}>◉</span><span className={sideLabel}>Grafo de conocimiento</span>
           </button>
         </div>
 
-        <div className="sidebar-footer">
-          <span>@{user.username}</span>
-          <button className="btn-ghost" onClick={logout}>Salir</button>
+        <div className="mt-auto flex items-center justify-between gap-2 border-t border-edge p-3 text-[13px] text-dim">
+          <span className="flex min-w-0 items-center gap-2">
+            {user.picture && <img src={user.picture} alt="" referrerPolicy="no-referrer" className="h-5 w-5 shrink-0 rounded-full" />}
+            <span className={sideLabel} title={`@${user.username}`}>{user.name ?? `@${user.username}`}</span>
+          </span>
+          <button className={btnGhost} onClick={logout}>Salir</button>
         </div>
       </nav>
 
-      <main className="main">
+      <main className="flex flex-1 flex-col overflow-hidden">
         {section === 'board' && param && (
           <BoardView boardId={Number(param)} initialCardId={route[2] === 'card' ? Number(route[3]) : undefined} />
         )}
@@ -221,8 +327,8 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
         {section === 'chat' && param && <ChatView channelId={Number(param)} user={user} />}
         {section === 'graph' && <GraphView />}
         {!section && (
-          <div className="empty-state">
-            <h3>Bienvenido a Obstresla</h3>
+          <div className={emptyState}>
+            <h3 className="font-display text-base font-bold text-fg">Bienvenido a Obstresla</h3>
             <p>Crea un tablero, una nota o un canal desde la barra lateral.</p>
           </div>
         )}
@@ -245,7 +351,7 @@ export default function App() {
       .finally(() => setLoading(false));
   }, []);
 
-  if (loading) return <div className="empty-state" style={{ height: '100vh' }}>Cargando…</div>;
+  if (loading) return <div className={`${emptyState} h-screen`}>Cargando…</div>;
   if (!user) return <Login onAuth={setUser} />;
   return <Workspace user={user} onLogout={() => setUser(null)} />;
 }

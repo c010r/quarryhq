@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import { get, onWsEvent } from '../api';
 import type { GraphEdge, GraphNode } from '../types';
 import { navigate } from '../App';
+import { mainHeader, viewTitle } from '../ui';
 
-const NODE_COLORS: Record<string, string> = { note: '#8b5cf6', card: '#3b82f6', channel: '#22c55e' };
+// Los nodos usan el color de su módulo: notas violeta, tarjetas ámbar, canales teal.
+const NODE_COLORS: Record<string, string> = { note: '#b18cfa', card: '#e9a23b', channel: '#3ecfb2' };
 
 interface SimNode extends GraphNode { x: number; y: number; vx: number; vy: number }
 
@@ -91,30 +93,30 @@ export default function GraphView() {
 
   return (
     <>
-      <div className="main-header">
-        <h2>◉ Grafo de conocimiento</h2>
-        <span className="subtitle">
+      <div className={mainHeader}>
+        <h2 className={viewTitle}>◉ Grafo de conocimiento</h2>
+        <span className="text-[13px] text-dim">
           {data ? `${data.nodes.length} nodos · ${data.edges.length} vínculos` : 'Cargando…'}
         </span>
       </div>
-      <div className="main-body">
-        <div className="graph-container" ref={containerRef}
+      <div className="flex-1 overflow-auto">
+        <div className="relative h-full" ref={containerRef}
           onMouseMove={onMouseMove}
           onMouseUp={() => (dragRef.current = null)}
           onMouseLeave={() => (dragRef.current = null)}>
-          <svg>
+          <svg className="block h-full w-full">
             {data?.edges.map((edge, i) => {
               const a = byKey.get(edge.source), b = byKey.get(edge.target);
               if (!a || !b) return null;
               return (
                 <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-                  stroke={edge.kind === 'discussion' ? '#22c55e55' : '#8b5cf655'}
+                  stroke={edge.kind === 'discussion' ? '#3ecfb255' : '#b18cfa55'}
                   strokeWidth={1.5}
                   strokeDasharray={edge.kind === 'manual' ? '4 3' : undefined} />
               );
             })}
             {positions.map((node) => (
-              <g key={node.key} className="graph-node"
+              <g key={node.key} className="group cursor-pointer"
                 transform={`translate(${node.x}, ${node.y})`}
                 onMouseDown={(e) => {
                   const rect = containerRef.current!.getBoundingClientRect();
@@ -122,18 +124,19 @@ export default function GraphView() {
                 }}
                 onDoubleClick={() => openNode(node)}>
                 <circle r={node.type === 'note' ? 11 : 9} fill={NODE_COLORS[node.type]}
-                  stroke="var(--bg)" strokeWidth={2} />
-                <text y={node.type === 'note' ? 25 : 23} textAnchor="middle">
+                  stroke="var(--color-ink)" strokeWidth={2} />
+                <text y={node.type === 'note' ? 25 : 23} textAnchor="middle"
+                  className="pointer-events-none fill-dim text-[10px] group-hover:fill-fg group-hover:font-semibold">
                   {node.label.length > 22 ? node.label.slice(0, 20) + '…' : node.label}
                 </text>
               </g>
             ))}
           </svg>
-          <div className="graph-legend">
-            <div className="row"><span className="dot" style={{ background: NODE_COLORS.note }} /> Notas</div>
-            <div className="row"><span className="dot" style={{ background: NODE_COLORS.card }} /> Tarjetas</div>
-            <div className="row"><span className="dot" style={{ background: NODE_COLORS.channel }} /> Canales</div>
-            <div className="row" style={{ color: 'var(--text-dim)', marginTop: 4 }}>Doble clic para abrir · arrastra para mover</div>
+          <div className="absolute right-3.5 top-3.5 flex flex-col gap-1.5 rounded-xl border border-edge bg-panel px-4 py-3 text-xs">
+            <div className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-note" /> Notas</div>
+            <div className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-board" /> Tarjetas</div>
+            <div className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-chat" /> Canales</div>
+            <div className="mt-1 flex items-center gap-2 text-dim">Doble clic para abrir · arrastra para mover</div>
           </div>
         </div>
       </div>

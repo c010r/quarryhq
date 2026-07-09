@@ -41,30 +41,33 @@ export default function CalendarView({ lists, onOpenCard }: {
 
   const todayKey = toKey(new Date());
   const monthLabel = cursor.toLocaleDateString('es', { month: 'long', year: 'numeric' });
+  const navBtn = 'rounded-lg border border-edge bg-panel px-3 py-1 text-dim transition-colors hover:border-board hover:text-fg';
 
   return (
-    <div className="calendar-view">
-      <div className="calendar-nav">
-        <button onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1))}>←</button>
-        <h3>{monthLabel}</h3>
-        <button onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1))}>→</button>
-        <button onClick={() => { const d = new Date(); setCursor(new Date(d.getFullYear(), d.getMonth(), 1)); }}>Hoy</button>
-        <span className="subtitle" style={{ color: 'var(--text-dim)', fontSize: 12.5 }}>
-          Las tarjetas aparecen en su fecha de vencimiento
-        </span>
+    <div className="p-5">
+      <div className="mb-3.5 flex items-center gap-3.5">
+        <button className={navBtn} onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1))}>←</button>
+        <h3 className="font-display text-[15px] font-bold capitalize">{monthLabel}</h3>
+        <button className={navBtn} onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1))}>→</button>
+        <button className={navBtn} onClick={() => { const d = new Date(); setCursor(new Date(d.getFullYear(), d.getMonth(), 1)); }}>Hoy</button>
+        <span className="text-xs text-dim">Las tarjetas aparecen en su fecha de vencimiento</span>
       </div>
-      <div className="calendar-grid">
-        {DOW.map((d) => <div key={d} className="calendar-dow">{d}</div>)}
+      <div className="grid grid-cols-7 gap-1.5">
+        {DOW.map((d) => (
+          <div key={d} className="p-1 text-center text-[11px] uppercase tracking-wider text-dim">{d}</div>
+        ))}
         {days.map((day) => {
           const key = toKey(day);
           const cards = cardsByDay.get(key) ?? [];
           const otherMonth = day.getMonth() !== cursor.getMonth();
           return (
-            <div key={key} className={`calendar-day ${otherMonth ? 'other-month' : ''} ${key === todayKey ? 'today' : ''}`}>
-              <span className="day-num">{day.getDate()}</span>
+            <div key={key}
+              className={`flex min-h-24 flex-col gap-1 rounded-lg border bg-panel p-1.5 ${key === todayKey ? 'border-board' : 'border-edge'} ${otherMonth ? 'opacity-35' : ''}`}>
+              <span className={`text-[11.5px] ${key === todayKey ? 'font-bold text-board' : 'text-dim'}`}>{day.getDate()}</span>
               {cards.map((c) => (
-                <button key={c.id} className={`calendar-card ${c.completed ? 'completed' : ''}`}
-                  onClick={() => onOpenCard(c.id)} title={c.title}>
+                <button key={c.id} title={c.title}
+                  className={`overflow-hidden text-ellipsis whitespace-nowrap rounded border-l-3 bg-raised px-1.5 py-0.5 text-left text-[11.5px] transition-colors hover:bg-hover ${c.completed ? 'border-ok opacity-70 line-through' : 'border-board'}`}
+                  onClick={() => onOpenCard(c.id)}>
                   {c.title}
                 </button>
               ))}

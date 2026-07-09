@@ -1,5 +1,9 @@
 import pg from 'pg';
 
+// Variables locales opcionales (.env en la raíz): GOOGLE_CLIENT_ID, DATABASE_URL…
+// Se carga aquí porque este módulo se importa antes de que corra index.ts.
+try { process.loadEnvFile(); } catch { /* sin .env */ }
+
 // bigint (COUNT, SUM) llega como string por defecto; lo convertimos a number
 pg.types.setTypeParser(20, (v) => parseInt(v, 10));
 
@@ -37,7 +41,11 @@ export async function initSchema() {
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
       username TEXT NOT NULL UNIQUE,
-      password_hash TEXT NOT NULL,
+      password_hash TEXT,
+      google_sub TEXT,
+      email TEXT,
+      name TEXT,
+      picture TEXT,
       created_at TEXT NOT NULL DEFAULT ${NOW_UTC}
     );
 
@@ -163,6 +171,15 @@ export async function initSchema() {
       content TEXT NOT NULL,
       send_at TEXT NOT NULL
     );
+
+    -- Migración para bases anteriores a Google Sign-In (CREATE TABLE IF NOT
+    -- EXISTS no altera tablas ya existentes)
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS google_sub TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS name TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS picture TEXT;
+    ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS users_google_sub_idx ON users (google_sub);
   `);
 }
 

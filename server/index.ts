@@ -78,7 +78,7 @@ app.post('/api/login', h(async (req, res) => {
   const { username, password } = req.body ?? {};
   const user = await get<{ id: number; username: string; password_hash: string }>(
     'SELECT id, username, password_hash FROM users WHERE username = $1', [username?.trim() ?? '']);
-  if (!user || !verifyPassword(password ?? '', user.password_hash)) {
+  if (!user || !user.password_hash || !verifyPassword(password ?? '', user.password_hash)) {
     return res.status(401).json({ error: 'Credenciales inválidas' });
   }
   const token = crypto.randomBytes(32).toString('hex');
@@ -86,8 +86,59 @@ app.post('/api/login', h(async (req, res) => {
   res.json({ token, user: { id: user.id, username: user.username } });
 }));
 
+// ---------- Google Sign-In ----------
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID ?? '';
+
+// El cliente pregunta si el botón de Google debe mostrarse y con qué client id
+app.get('/api/auth/config', (_req, res) => {
+  res.json({ googleClientId: GOOGLE_CLIENT_ID || null });
+});
+
+app.post('/api/auth/google', h(async (req, res) => {
+  if (!GOOGLE_CLIENT_ID) {
+    return res.status(501).json({ error: 'Google Sign-In no está configurado (falta GOOGLE_CLIENT_ID)' });
+  }
+  const { credential } = req.body ?? {};
+  if (typeof credential !== 'string' || !credential) {
+    return res.status(400).json({ error: 'Falta la credencial de Google' });
+  }
+
+  // Google valida firma y expiración del ID token en tokeninfo
+  const check = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`);
+  if (!check.ok) return res.status(401).json({ error: 'Token de Google inválido' });
+  const info = (await check.json()) as { aud?: string; sub?: string; email?: string; name?: string; picture?: string };
+  if (info.aud !== GOOGLE_CLIENT_ID || !info.sub) {
+    return res.status(401).json({ error: 'Token de Google inválido' });
+  }
+
+  let user = await get<{ id: number; username: string; name: string | null; picture: string | null }>(
+    'SELECT id, username, name, picture FROM users WHERE google_sub = $1', [info.sub]);
+
+  if (user) {
+    // Refresca el perfil por si cambió en Google
+    await run('UPDATE users SET email = $1, name = $2, picture = $3 WHERE id = $4',
+      [info.email ?? null, info.name ?? null, info.picture ?? null, user.id]);
+    user = { ...user, name: info.name ?? user.name, picture: info.picture ?? user.picture };
+  } else {
+    // Username único derivado del email (parte local + sufijo numérico si hace falta)
+    const base = (info.email?.split('@')[0] ?? 'google').toLowerCase().replace(/[^a-z0-9._-]/g, '') || 'google';
+    let username = base;
+    for (let i = 2; await get('SELECT 1 FROM users WHERE username = $1', [username]); i++) {
+      username = `${base}${i}`;
+    }
+    const userId = await insert(
+      'INSERT INTO users (username, google_sub, email, name, picture) VALUES ($1, $2, $3, $4, $5)',
+      [username, info.sub, info.email ?? null, info.name ?? null, info.picture ?? null]);
+    user = { id: userId, username, name: info.name ?? null, picture: info.picture ?? null };
+  }
+
+  const token = crypto.randomBytes(32).toString('hex');
+  await run('INSERT INTO sessions (token, user_id) VALUES ($1, $2)', [token, user.id]);
+  res.json({ token, user });
+}));
+
 app.get('/api/me', requireAuth, h(async (req: AuthedRequest, res) => {
-  const user = await get('SELECT id, username FROM users WHERE id = $1', [req.userId!]);
+  const user = await get('SELECT id, username, name, picture FROM users WHERE id = $1', [req.userId!]);
   res.json({ user });
 }));
 

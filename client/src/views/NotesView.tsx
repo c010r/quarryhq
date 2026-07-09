@@ -3,6 +3,7 @@ import { get, post, patch, del } from '../api';
 import type { Backlink, Note, NoteMeta, NoteVersion, TagCount, Template } from '../types';
 import { renderMarkdown } from '../markdown';
 import { navigate } from '../App';
+import { btnDanger, chip, emptyState, headerBtn, modalClose, sectionTitle, sideHeading, sideIcon, sideItem, sideLabel } from '../ui';
 
 interface NoteDetail {
   note: Note;
@@ -44,22 +45,26 @@ function VersionHistory({ noteId, onRestore, onClose }: {
   }
 
   return (
-    <div className="side-panel">
-      <div className="side-panel-header">
+    <div className="fixed inset-y-0 right-0 z-60 flex w-[340px] flex-col border-l border-edge bg-panel shadow-2xl shadow-black/40">
+      <div className="flex items-center justify-between border-b border-edge px-4 py-3.5 font-display font-bold">
         🕘 Historial de versiones
-        <button className="modal-close" onClick={onClose}>✕</button>
+        <button className={modalClose} onClick={onClose}>✕</button>
       </div>
-      <div className="side-panel-body">
-        {versions.length === 0 && <p style={{ color: 'var(--text-dim)', fontSize: 13 }}>Sin versiones anteriores. Se crean automáticamente al editar.</p>}
+      <div className="flex-1 overflow-y-auto p-3">
+        {versions.length === 0 && <p className="text-[13px] text-dim">Sin versiones anteriores. Se crean automáticamente al editar.</p>}
         {versions.map((v) => (
-          <div key={v.id} className="version-item">
-            <div className="meta">{formatVersionDate(v.created_at)} · {v.size} caracteres</div>
+          <div key={v.id} className="mb-2 rounded-lg border border-edge bg-raised px-3 py-2.5 text-[13px]">
+            <div className="mb-1.5 text-[11.5px] text-dim">{formatVersionDate(v.created_at)} · {v.size} caracteres</div>
             <div>{v.title}</div>
-            <div className="actions">
-              <button onClick={() => toggle(v.id)}>{expanded === v.id ? 'Ocultar' : 'Ver contenido'}</button>
-              <button onClick={() => restore(v.id)}>↩ Restaurar</button>
+            <div className="mt-1.5 flex gap-2.5">
+              <button className="text-xs text-accent hover:brightness-110" onClick={() => toggle(v.id)}>
+                {expanded === v.id ? 'Ocultar' : 'Ver contenido'}
+              </button>
+              <button className="text-xs text-accent hover:brightness-110" onClick={() => restore(v.id)}>↩ Restaurar</button>
             </div>
-            {expanded === v.id && <pre>{previewContent}</pre>}
+            {expanded === v.id && (
+              <pre className="mt-1.5 max-h-30 overflow-auto whitespace-pre-wrap rounded-md bg-ink p-2 font-mono text-[11.5px]">{previewContent}</pre>
+            )}
           </div>
         ))}
       </div>
@@ -181,90 +186,99 @@ export default function NotesView({ noteId, notes, onChanged }: {
     }
   }
 
+  const toggleBtn = (active: boolean) =>
+    `px-3 py-1.5 text-xs transition-colors ${active ? 'bg-note/10 font-semibold text-note' : 'text-dim hover:text-fg'}`;
+
   return (
-    <div className="notes-layout">
-      <div className="notes-list">
-        <div className="sidebar-heading">Acciones</div>
-        <button className="sidebar-item" onClick={openDailyNote}>
-          <span className="icon">☀</span><span>Nota diaria de hoy</span>
+    <div className="flex h-full">
+      <div className="w-48 shrink-0 overflow-y-auto border-r border-edge p-2.5 lg:w-[250px]">
+        <div className={sideHeading}>Acciones</div>
+        <button className={sideItem(false, 'note')} onClick={openDailyNote}>
+          <span className={sideIcon}>☀</span><span className={sideLabel}>Nota diaria de hoy</span>
         </button>
-        <button className="sidebar-item" onClick={openTemplates}>
-          <span className="icon">📄</span><span>Nueva desde plantilla…</span>
+        <button className={sideItem(false, 'note')} onClick={openTemplates}>
+          <span className={sideIcon}>📄</span><span className={sideLabel}>Nueva desde plantilla…</span>
         </button>
         {showTemplates && templates.map((t) => (
-          <button key={t.id} className="sidebar-item" style={{ paddingLeft: 24 }}
+          <button key={t.id} className={`${sideItem(false, 'note')} pl-6`}
             onClick={() => createFromTemplate(t.id)}>
-            <span className="icon">↳</span><span>{t.name}</span>
+            <span className={sideIcon}>↳</span><span className={sideLabel}>{t.name}</span>
           </button>
         ))}
 
         {tags.length > 0 && (
           <>
-            <div className="sidebar-heading">Etiquetas</div>
-            <div className="tags-row" style={{ padding: '4px 6px 8px' }}>
+            <div className={sideHeading}>Etiquetas</div>
+            <div className="flex flex-wrap gap-1.5 px-1.5 pb-2 pt-1">
               {tags.map((t) => (
                 <span key={t.tag}
-                  className={`tag-chip ${activeTag === t.tag ? '' : 'inactive'}`}
+                  className={`inline-flex cursor-pointer items-center gap-1 rounded-full px-2.5 py-0.5 text-xs transition ${
+                    activeTag === t.tag ? 'bg-note/15 text-note' : 'bg-raised text-dim hover:text-fg'
+                  }`}
                   onClick={() => setActiveTag(activeTag === t.tag ? null : t.tag)}>
-                  #{t.tag} <span style={{ opacity: 0.7 }}>{t.count}</span>
+                  #{t.tag} <span className="opacity-70">{t.count}</span>
                 </span>
               ))}
             </div>
           </>
         )}
 
-        <div className="sidebar-heading">
+        <div className={sideHeading}>
           {activeTag ? `Notas con #${activeTag}` : 'Todas las notas'}
         </div>
         {(filteredNotes ?? notes).map((n) => (
-          <button key={n.id} className={`sidebar-item ${detail?.note.id === n.id ? 'active' : ''}`}
+          <button key={n.id} className={sideItem(detail?.note.id === n.id, 'note')}
             onClick={() => navigate(`/notes/${n.id}`)}>
-            <span className="icon">◆</span><span>{n.title}</span>
+            <span className={`${sideIcon} text-note`}>◆</span><span className={sideLabel}>{n.title}</span>
           </button>
         ))}
-        {(filteredNotes ?? notes).length === 0 && <div className="palette-empty">Sin notas.</div>}
+        {(filteredNotes ?? notes).length === 0 && <div className="p-6 text-center text-[13px] text-dim">Sin notas.</div>}
       </div>
 
       {detail ? (
-        <div className="note-editor">
-          <div className="note-toolbar">
-            <input className="note-title" value={title}
-              onChange={(e) => { setTitle(e.target.value); scheduleSave(e.target.value, content); }} />
-            <span className="save-status">
+        <div className="flex flex-1 flex-col overflow-hidden">
+          <div className="flex shrink-0 flex-wrap items-center gap-x-2.5 gap-y-2 border-b border-edge px-5 py-3">
+            <input value={title}
+              onChange={(e) => { setTitle(e.target.value); scheduleSave(e.target.value, content); }}
+              className="min-w-40 flex-1 rounded-lg border border-transparent bg-transparent px-2 py-1 font-display text-[17px] font-bold outline-none transition-colors focus:border-accent focus:bg-ink" />
+            <span className="min-w-18 text-right text-xs text-dim">
               {saveState === 'saved' ? '✓ Guardado' : saveState === 'saving' ? 'Guardando…' : 'Sin guardar'}
             </span>
-            <div className="toggle-group">
-              <button className={mode === 'edit' ? 'active' : ''} onClick={() => setMode('edit')}>Editar</button>
-              <button className={mode === 'preview' ? 'active' : ''} onClick={() => setMode('preview')}>Vista previa</button>
+            <div className="flex overflow-hidden rounded-lg border border-edge bg-ink">
+              <button className={toggleBtn(mode === 'edit')} onClick={() => setMode('edit')}>Editar</button>
+              <button className={toggleBtn(mode === 'preview')} onClick={() => setMode('preview')}>Vista previa</button>
             </div>
-            <button className="header-btn" onClick={() => setShowHistory(true)} title="Historial de versiones">🕘 Historial</button>
-            <button className="header-btn" onClick={saveAsTemplate} title="Guardar como plantilla">📄</button>
-            <button className="btn-danger" onClick={removeNote} title="Eliminar nota">🗑</button>
+            <button className={headerBtn} onClick={() => setShowHistory(true)} title="Historial de versiones">🕘 Historial</button>
+            <button className={headerBtn} onClick={saveAsTemplate} title="Guardar como plantilla">📄</button>
+            <button className={btnDanger} onClick={removeNote} title="Eliminar nota">🗑</button>
           </div>
 
-          <div className="note-content">
+          <div className="flex flex-1 overflow-hidden">
             {mode === 'edit' ? (
               <textarea value={content} placeholder="Escribe en markdown… usa [[Título]] para enlazar otras notas."
-                onChange={(e) => { setContent(e.target.value); scheduleSave(title, e.target.value); }} />
+                onChange={(e) => { setContent(e.target.value); scheduleSave(title, e.target.value); }}
+                className="flex-1 resize-none bg-transparent px-6 py-5 font-mono text-[13.5px] leading-[1.65] outline-none" />
             ) : (
-              <div className="note-preview" onClick={onPreviewClick}
+              <div className="md flex-1 overflow-y-auto px-6 py-5" onClick={onPreviewClick}
                 dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }} />
             )}
           </div>
 
           {(detail.backlinks.length > 0 || detail.outgoing.length > 0) && (
-            <div className="backlinks-panel">
+            <div className="max-h-44 shrink-0 overflow-y-auto border-t border-edge px-5 py-3.5">
               {detail.backlinks.length > 0 && (
                 <>
-                  <h4>← Enlaces entrantes ({detail.backlinks.length})</h4>
-                  <div className="chip-row" style={{ marginBottom: 10 }}>
+                  <h4 className={sectionTitle}>← Enlaces entrantes ({detail.backlinks.length})</h4>
+                  <div className="mb-2.5 flex flex-wrap items-center gap-2">
                     {detail.backlinks.map((b, i) => (
-                      <span key={i} className="chip" onClick={() => {
+                      <span key={i} className={chip} onClick={() => {
                         if (b.source_type === 'note') navigate(`/notes/${b.source_id}`);
                         else if (b.source_type === 'card') alert(`Vinculada desde la tarjeta: ${b.label}`);
                         else if (b.source_type === 'message' && b.channel_id) navigate(`/chat/${b.channel_id}`);
                       }}>
-                        <span className="icon">{b.source_type === 'note' ? '◆' : b.source_type === 'card' ? '▦' : '💬'}</span>
+                        <span className={b.source_type === 'note' ? 'text-note' : b.source_type === 'card' ? 'text-board' : 'text-chat'}>
+                          {b.source_type === 'note' ? '◆' : b.source_type === 'card' ? '▦' : '💬'}
+                        </span>
                         {(b.label ?? '').slice(0, 50) || '(sin título)'}
                       </span>
                     ))}
@@ -273,11 +287,11 @@ export default function NotesView({ noteId, notes, onChanged }: {
               )}
               {detail.outgoing.length > 0 && (
                 <>
-                  <h4>→ Enlaces salientes ({detail.outgoing.length})</h4>
-                  <div className="chip-row">
+                  <h4 className={sectionTitle}>→ Enlaces salientes ({detail.outgoing.length})</h4>
+                  <div className="flex flex-wrap items-center gap-2">
                     {detail.outgoing.map((o) => (
-                      <span key={o.id} className="chip" onClick={() => navigate(`/notes/${o.id}`)}>
-                        <span className="icon">◆</span>{o.title}
+                      <span key={o.id} className={chip} onClick={() => navigate(`/notes/${o.id}`)}>
+                        <span className="text-note">◆</span>{o.title}
                       </span>
                     ))}
                   </div>
@@ -287,8 +301,8 @@ export default function NotesView({ noteId, notes, onChanged }: {
           )}
         </div>
       ) : (
-        <div className="empty-state" style={{ flex: 1 }}>
-          <h3>◆ Tus notas</h3>
+        <div className={`${emptyState} flex-1`}>
+          <h3 className="font-display text-base font-bold text-fg"><span className="text-note">◆</span> Tus notas</h3>
           <p>Selecciona una nota o crea una nueva desde la barra lateral.</p>
         </div>
       )}

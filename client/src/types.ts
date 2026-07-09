@@ -1,4 +1,4 @@
-export interface User { id: number; username: string }
+export interface User { id: number; username: string; name?: string | null; picture?: string | null }
 export interface Board { id: number; name: string }
 export interface List { id: number; board_id: number; name: string; position: number; cards: Card[] }
 export interface Card {

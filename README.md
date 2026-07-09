@@ -32,12 +32,18 @@ SaaS de espacio de trabajo que combina lo mejor de tres herramientas, **todas vi
 - **Frontend:** React 18 + TypeScript + Vite (SPA, rutas por hash, CSS propio con tema oscuro)
 - **Backend:** Node.js + Express + WebSockets (`ws`)
 - **Base de datos:** **PostgreSQL 16** (driver `pg`, pool de conexiones). El esquema se crea solo al arrancar; los timestamps se guardan como texto UTC para compatibilidad de formato con el cliente.
-- **Auth:** sesiones con token + contraseñas con `scrypt`
+- **Auth:** sesiones con token + contraseñas con `scrypt`, y **Google Sign-In** opcional (define `GOOGLE_CLIENT_ID` con un client id OAuth de Google Cloud y aparece el botón "Continuar con Google"; el servidor verifica el ID token contra `tokeninfo`)
 
 ## Desarrollo
 
 Requisitos: Node 24+ y PostgreSQL corriendo. Por defecto conecta a
 `postgres://postgres:postgres@localhost:5432/obstresla` — configurable con la variable `DATABASE_URL`.
+
+Las variables se pueden definir en un `.env` en la raíz (ignorado por git), p. ej.:
+
+```
+GOOGLE_CLIENT_ID=xxxxx.apps.googleusercontent.com
+```
 
 ```bash
 # una sola vez: crear la base

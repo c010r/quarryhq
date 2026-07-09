@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import type { Card, List } from '../types';
 import { LABEL_COLORS } from '../types';
 import { patch } from '../api';
+import { emptyState } from '../ui';
 
 type SortKey = 'title' | 'list' | 'due_date' | 'completed';
 
@@ -36,37 +37,41 @@ export default function TableView({ lists, onOpenCard, onChanged }: {
   }
 
   const arrow = (key: SortKey) => sortKey === key ? (asc ? ' ↑' : ' ↓') : '';
+  const th = 'cursor-pointer select-none border-b border-edge px-3 py-2.5 text-left text-[11.5px] font-semibold uppercase tracking-wider text-dim transition-colors hover:text-fg';
+  const td = 'border-b border-edge px-3 py-2.5 text-[13.5px]';
 
   return (
-    <div className="table-view">
-      <table>
+    <div className="p-5">
+      <table className="w-full border-collapse">
         <thead>
           <tr>
-            <th onClick={() => sortBy('completed')}>✓{arrow('completed')}</th>
-            <th onClick={() => sortBy('title')}>Tarjeta{arrow('title')}</th>
-            <th onClick={() => sortBy('list')}>Lista{arrow('list')}</th>
-            <th>Etiquetas</th>
-            <th onClick={() => sortBy('due_date')}>Vencimiento{arrow('due_date')}</th>
-            <th>Miembros</th>
-            <th>Checklist</th>
+            <th className={th} onClick={() => sortBy('completed')}>✓{arrow('completed')}</th>
+            <th className={th} onClick={() => sortBy('title')}>Tarjeta{arrow('title')}</th>
+            <th className={th} onClick={() => sortBy('list')}>Lista{arrow('list')}</th>
+            <th className={`${th} cursor-default`}>Etiquetas</th>
+            <th className={th} onClick={() => sortBy('due_date')}>Vencimiento{arrow('due_date')}</th>
+            <th className={`${th} cursor-default`}>Miembros</th>
+            <th className={`${th} cursor-default`}>Checklist</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((card) => {
             const labels: string[] = JSON.parse(card.labels || '[]');
             return (
-              <tr key={card.id} onClick={() => onOpenCard(card.id)}>
-                <td onClick={(e) => toggleCompleted(card, e)}>
-                  <input type="checkbox" checked={!!card.completed} readOnly style={{ accentColor: 'var(--green)' }} />
+              <tr key={card.id} onClick={() => onOpenCard(card.id)} className="cursor-pointer transition-colors hover:bg-panel">
+                <td className={td} onClick={(e) => toggleCompleted(card, e)}>
+                  <input type="checkbox" checked={!!card.completed} readOnly className="accent-ok" />
                 </td>
-                <td style={card.completed ? { textDecoration: 'line-through', color: 'var(--text-dim)' } : undefined}>
+                <td className={`${td} ${card.completed ? 'text-dim line-through' : ''}`}>
                   {card.title}
                 </td>
-                <td style={{ color: 'var(--text-dim)' }}>{card.list_name}</td>
-                <td>{labels.map((l) => <span key={l} className="label-pill" style={{ background: LABEL_COLORS[l] ?? '#666' }} />)}</td>
-                <td style={{ color: 'var(--text-dim)' }}>{card.due_date ?? '—'}</td>
-                <td style={{ color: 'var(--text-dim)' }}>{card.member_names ?? '—'}</td>
-                <td style={{ color: 'var(--text-dim)' }}>
+                <td className={`${td} text-dim`}>{card.list_name}</td>
+                <td className={td}>{labels.map((l) => (
+                  <span key={l} className="mr-1 inline-block h-1.5 w-6 rounded-full" style={{ background: LABEL_COLORS[l] ?? '#666' }} />
+                ))}</td>
+                <td className={`${td} text-dim`}>{card.due_date ?? '—'}</td>
+                <td className={`${td} text-dim`}>{card.member_names ?? '—'}</td>
+                <td className={`${td} text-dim`}>
                   {card.checklist_total ? `${card.checklist_done}/${card.checklist_total}` : '—'}
                 </td>
               </tr>
@@ -74,7 +79,7 @@ export default function TableView({ lists, onOpenCard, onChanged }: {
           })}
         </tbody>
       </table>
-      {rows.length === 0 && <div className="empty-state" style={{ height: 200 }}>No hay tarjetas en este tablero.</div>}
+      {rows.length === 0 && <div className={`${emptyState} h-48`}>No hay tarjetas en este tablero.</div>}
     </div>
   );
 }
