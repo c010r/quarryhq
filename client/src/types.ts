@@ -6,6 +6,8 @@ export interface User {
   subscription?: Subscription;    // lo contratado por este usuario
   premium_until?: string | null;
   is_admin?: number;              // puede gestionar códigos de invitación
+  email?: string | null;
+  email_verified?: number;
 }
 export interface InviteCode {
   id: number; code: string; trial_days: number; max_uses: number; used_count: number;

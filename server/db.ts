@@ -164,6 +164,16 @@ export async function initSchema() {
       PRIMARY KEY (message_id, user_id, emoji)
     );
 
+    -- Tokens de verificación de email y de reseteo de contraseña (hasheados)
+    CREATE TABLE IF NOT EXISTS auth_tokens (
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT ${NOW_UTC}
+    );
+
     -- Códigos de invitación: regalan días de Premium; los gestiona un admin
     CREATE TABLE IF NOT EXISTS invite_codes (
       id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -209,6 +219,9 @@ export async function initSchema() {
     ALTER TABLE users ADD COLUMN IF NOT EXISTS premium_until TEXT;
     -- Admin: puede generar y gestionar códigos de invitación
     ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin INTEGER NOT NULL DEFAULT 0;
+    -- Registro con email: verificación y unicidad (case-insensitive)
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified INTEGER NOT NULL DEFAULT 0;
+    CREATE UNIQUE INDEX IF NOT EXISTS users_email_idx ON users (LOWER(email)) WHERE email IS NOT NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS users_google_sub_idx ON users (google_sub);
   `);
 }

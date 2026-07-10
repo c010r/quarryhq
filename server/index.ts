@@ -4,8 +4,10 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import { all, get, run, insert, initSchema, seedIfEmpty } from './db.ts';
+import { APP_URL, resetPasswordHtml, sendMail, verifyEmailHtml } from './mailer.ts';
 
 const app = express();
+app.set('trust proxy', 1); // nginx delante: req.ip sale de X-Forwarded-For
 app.use(express.json());
 
 // Envuelve handlers async para que los errores lleguen al middleware de Express 4
@@ -49,6 +51,57 @@ function verifyPassword(password: string, stored: string): boolean {
 }
 
 type AuthedRequest = express.Request & { userId?: number };
+
+// Rate limiting en memoria para los endpoints de autenticación
+const attempts = new Map<string, { count: number; resetAt: number }>();
+function rateLimited(key: string, max: number, windowMs: number): boolean {
+  const now = Date.now();
+  const entry = attempts.get(key);
+  if (!entry || entry.resetAt < now) {
+    attempts.set(key, { count: 1, resetAt: now + windowMs });
+    return false;
+  }
+  entry.count++;
+  return entry.count > max;
+}
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of attempts) if (entry.resetAt < now) attempts.delete(key);
+}, 10 * 60 * 1000);
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Deriva un username único a partir del email (misma lógica que Google Sign-In)
+async function uniqueUsername(email: string): Promise<string> {
+  const base = (email.split('@')[0] ?? 'usuario').toLowerCase().replace(/[^a-z0-9._-]/g, '') || 'usuario';
+  let username = base;
+  for (let i = 2; await get('SELECT 1 FROM users WHERE username = $1', [username]); i++) {
+    username = `${base}${i}`;
+  }
+  return username;
+}
+
+// Tokens de un solo uso (verificación / reseteo); se guarda solo el hash
+function hashToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+async function createAuthToken(userId: number, kind: 'verify' | 'reset', ttlMs: number): Promise<string> {
+  const token = crypto.randomBytes(32).toString('hex');
+  await run('DELETE FROM auth_tokens WHERE user_id = $1 AND kind = $2', [userId, kind]);
+  await run('INSERT INTO auth_tokens (user_id, kind, token_hash, expires_at) VALUES ($1, $2, $3, $4)',
+    [userId, kind, hashToken(token), new Date(Date.now() + ttlMs).toISOString()]);
+  return token;
+}
+
+async function consumeAuthToken(token: string, kind: 'verify' | 'reset'): Promise<number | null> {
+  const row = await get<{ id: number; user_id: number; expires_at: string }>(
+    'SELECT id, user_id, expires_at FROM auth_tokens WHERE token_hash = $1 AND kind = $2', [hashToken(token), kind]);
+  if (!row) return null;
+  await run('DELETE FROM auth_tokens WHERE id = $1', [row.id]);
+  if (row.expires_at < new Date().toISOString()) return null;
+  return row.user_id;
+}
 
 const requireAuth: express.RequestHandler = (req: AuthedRequest, res, next) => {
   const token = (req.headers.authorization ?? '').replace('Bearer ', '');
@@ -163,12 +216,17 @@ async function withinLimit(req: AuthedRequest, res: express.Response,
 }
 
 app.post('/api/register', h(async (req, res) => {
-  const { username, password } = req.body ?? {};
-  if (!username?.trim() || !password || password.length < 4) {
-    return res.status(400).json({ error: 'Usuario y contraseña (mín. 4 caracteres) requeridos' });
+  if (rateLimited(`reg:${req.ip}`, 5, 60 * 60 * 1000)) {
+    return res.status(429).json({ error: 'Demasiados registros desde esta dirección. Intenta más tarde.' });
   }
-  const existing = await get('SELECT id FROM users WHERE username = $1', [username.trim()]);
-  if (existing) return res.status(409).json({ error: 'Ese usuario ya existe' });
+  const email = (req.body?.email ?? '').trim().toLowerCase();
+  const { password } = req.body ?? {};
+  if (!EMAIL_RE.test(email)) return res.status(400).json({ error: 'Email inválido' });
+  if (!password || password.length < 8) {
+    return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' });
+  }
+  const existing = await get('SELECT id FROM users WHERE LOWER(email) = $1', [email]);
+  if (existing) return res.status(409).json({ error: 'Ya existe una cuenta con ese email' });
 
   // Código de invitación opcional: se valida antes de crear la cuenta para
   // que un código mal escrito no deje al colega registrado sin su prueba
@@ -181,27 +239,77 @@ app.post('/api/register', h(async (req, res) => {
     }
   }
 
-  const userId = await insert('INSERT INTO users (username, password_hash) VALUES ($1, $2)', [username.trim(), hashPassword(password)]);
+  const username = await uniqueUsername(email);
+  const userId = await insert('INSERT INTO users (username, email, password_hash) VALUES ($1, $2, $3)',
+    [username, email, hashPassword(password)]);
   let plan: 'free' | 'premium' = 'free';
   if (inviteCode) {
     const redeemed = await redeemInvite(userId, inviteCode);
     if (redeemed.ok) plan = 'premium';
   }
+
+  const verifyToken = await createAuthToken(userId, 'verify', 7 * 24 * 60 * 60 * 1000);
+  sendMail(email, 'Confirma tu correo en Obstresla', verifyEmailHtml(verifyToken))
+    .catch((err) => console.error('Error enviando verificación:', err));
+
   const token = crypto.randomBytes(32).toString('hex');
   await run('INSERT INTO sessions (token, user_id) VALUES ($1, $2)', [token, userId]);
-  res.json({ token, user: { id: userId, username: username.trim(), plan } });
+  res.json({ token, user: { id: userId, username, email, plan } });
 }));
 
 app.post('/api/login', h(async (req, res) => {
-  const { username, password } = req.body ?? {};
+  // Acepta email o username (compatibilidad con cuentas anteriores al registro con email)
+  const identifier = (req.body?.username ?? req.body?.email ?? '').trim();
+  const { password } = req.body ?? {};
+  if (rateLimited(`login:${req.ip}:${identifier.toLowerCase()}`, 10, 15 * 60 * 1000)) {
+    return res.status(429).json({ error: 'Demasiados intentos. Espera 15 minutos.' });
+  }
   const user = await get<{ id: number; username: string; password_hash: string }>(
-    'SELECT id, username, password_hash FROM users WHERE username = $1', [username?.trim() ?? '']);
+    'SELECT id, username, password_hash FROM users WHERE username = $1 OR LOWER(email) = LOWER($1)', [identifier]);
   if (!user || !user.password_hash || !verifyPassword(password ?? '', user.password_hash)) {
     return res.status(401).json({ error: 'Credenciales inválidas' });
   }
   const token = crypto.randomBytes(32).toString('hex');
   await run('INSERT INTO sessions (token, user_id) VALUES ($1, $2)', [token, user.id]);
   res.json({ token, user: { id: user.id, username: user.username, plan: await userPlan(user.id) } });
+}));
+
+// ---------- Verificación de email y reseteo de contraseña ----------
+app.get('/api/auth/verify', h(async (req, res) => {
+  const userId = await consumeAuthToken(String(req.query.token ?? ''), 'verify');
+  if (userId) await run('UPDATE users SET email_verified = 1 WHERE id = $1', [userId]);
+  // Vuelve a la app con el resultado en el hash
+  res.redirect(`${APP_URL}/#/${userId ? 'verificado' : 'verificacion-fallida'}`);
+}));
+
+app.post('/api/auth/forgot', h(async (req, res) => {
+  if (rateLimited(`forgot:${req.ip}`, 3, 15 * 60 * 1000)) {
+    return res.status(429).json({ error: 'Demasiados pedidos. Espera 15 minutos.' });
+  }
+  const email = (req.body?.email ?? '').trim().toLowerCase();
+  // Respuesta idéntica exista o no la cuenta: no revelar emails registrados
+  const user = await get<{ id: number }>('SELECT id FROM users WHERE LOWER(email) = $1 AND password_hash IS NOT NULL', [email]);
+  if (user) {
+    const token = await createAuthToken(user.id, 'reset', 60 * 60 * 1000);
+    sendMail(email, 'Restablece tu contraseña de Obstresla', resetPasswordHtml(token))
+      .catch((err) => console.error('Error enviando reseteo:', err));
+  }
+  res.json({ ok: true });
+}));
+
+app.post('/api/auth/reset', h(async (req, res) => {
+  const { token, password } = req.body ?? {};
+  if (!password || password.length < 8) {
+    return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' });
+  }
+  const userId = await consumeAuthToken(String(token ?? ''), 'reset');
+  if (!userId) return res.status(400).json({ error: 'El enlace es inválido o venció. Pide uno nuevo.' });
+  await run('UPDATE users SET password_hash = $1, email_verified = 1 WHERE id = $2', [hashPassword(password), userId]);
+  await run('DELETE FROM sessions WHERE user_id = $1', [userId]); // cierra todas las sesiones
+  const user = await get<{ id: number; username: string }>('SELECT id, username FROM users WHERE id = $1', [userId]);
+  const session = crypto.randomBytes(32).toString('hex');
+  await run('INSERT INTO sessions (token, user_id) VALUES ($1, $2)', [session, userId]);
+  res.json({ token: session, user: { ...user, plan: await userPlan(userId) } });
 }));
 
 // ---------- Google Sign-In ----------
@@ -257,7 +365,7 @@ app.post('/api/auth/google', h(async (req, res) => {
 
 app.get('/api/me', requireAuth, h(async (req: AuthedRequest, res) => {
   const plan = await userPlan(req.userId!); // primero: degrada suscripciones vencidas
-  const row = await get('SELECT id, username, name, picture, plan, premium_until, is_admin FROM users WHERE id = $1', [req.userId!]);
+  const row = await get('SELECT id, username, name, picture, plan, premium_until, is_admin, email, email_verified FROM users WHERE id = $1', [req.userId!]);
 
   // Información de equipo: titular ve sus miembros; un miembro ve a su titular
   let team: unknown = null;

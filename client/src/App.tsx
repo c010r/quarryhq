@@ -104,20 +104,41 @@ function GoogleButton({ onAuth, onError }: { onAuth: (user: User) => void; onErr
 
 // ---------- Login ----------
 function Login({ onAuth }: { onAuth: (user: User) => void }) {
-  const [mode, setMode] = useState<'login' | 'register'>('login');
-  const [username, setUsername] = useState('');
+  const [mode, setMode] = useState<'login' | 'register' | 'forgot'>('login');
+  const [identifier, setIdentifier] = useState(''); // email o usuario según el modo
   const [password, setPassword] = useState('');
   const [inviteCode, setInviteCode] = useState('');
   const [error, setError] = useState('');
+  const [info, setInfo] = useState(location.hash.includes('verificado') && !location.hash.includes('fallida')
+    ? '✓ Correo confirmado. Ya puedes iniciar sesión.'
+    : location.hash.includes('verificacion-fallida')
+      ? 'El enlace de verificación es inválido o venció.'
+      : '');
   const [busy, setBusy] = useState(false);
+
+  function switchMode(next: 'login' | 'register' | 'forgot') {
+    setMode(next);
+    setError('');
+    setInfo('');
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError('');
     try {
-      const body: Record<string, string> = { username, password };
-      if (mode === 'register' && inviteCode.trim()) body.invite_code = inviteCode.trim();
+      if (mode === 'forgot') {
+        await post('/api/auth/forgot', { email: identifier });
+        setInfo('Si existe una cuenta con ese email, te enviamos un enlace para restablecer la contraseña.');
+        return;
+      }
+      const body: Record<string, string> = { password };
+      if (mode === 'register') {
+        body.email = identifier;
+        if (inviteCode.trim()) body.invite_code = inviteCode.trim();
+      } else {
+        body.username = identifier;
+      }
       const data = await post<{ token: string; user: User }>(`/api/${mode}`, body);
       setToken(data.token);
       onAuth(data.user);
@@ -138,20 +159,79 @@ function Login({ onAuth }: { onAuth: (user: User) => void }) {
           <span className="font-semibold text-note">notas</span> y{' '}
           <span className="font-semibold text-chat">chat</span> — todo conectado en un solo espacio de trabajo.
         </p>
-        <input className={inputBase} placeholder="Usuario" value={username} onChange={(e) => setUsername(e.target.value)} autoFocus />
-        <input className={inputBase} placeholder="Contraseña" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+        <input className={inputBase} autoFocus
+          placeholder={mode === 'login' ? 'Email o usuario' : 'Email'}
+          type={mode === 'login' ? 'text' : 'email'}
+          value={identifier} onChange={(e) => setIdentifier(e.target.value)} />
+        {mode !== 'forgot' && (
+          <input className={inputBase} type="password" value={password}
+            placeholder={mode === 'register' ? 'Contraseña (mín. 8 caracteres)' : 'Contraseña'}
+            onChange={(e) => setPassword(e.target.value)} />
+        )}
         {mode === 'register' && (
           <input className={inputBase} placeholder="Código de invitación (opcional)"
             value={inviteCode} onChange={(e) => setInviteCode(e.target.value.toUpperCase())} />
         )}
         {error && <div className="text-[13px] text-danger">{error}</div>}
+        {info && <div className="text-[13px] text-ok">{info}</div>}
         <button className={btnPrimary} disabled={busy}>
-          {mode === 'login' ? 'Entrar' : 'Crear cuenta'}
+          {mode === 'login' ? 'Entrar' : mode === 'register' ? 'Crear cuenta' : 'Enviar enlace'}
         </button>
-        <button type="button" className={btnGhost} onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(''); }}>
-          {mode === 'login' ? '¿No tienes cuenta? Regístrate' : '¿Ya tienes cuenta? Inicia sesión'}
+        <div className="flex items-center justify-between">
+          <button type="button" className={btnGhost} onClick={() => switchMode(mode === 'login' ? 'register' : 'login')}>
+            {mode === 'login' ? '¿No tienes cuenta? Regístrate' : '¿Ya tienes cuenta? Inicia sesión'}
+          </button>
+          {mode === 'login' && (
+            <button type="button" className={btnGhost} onClick={() => switchMode('forgot')}>
+              ¿Olvidaste tu contraseña?
+            </button>
+          )}
+        </div>
+        {mode !== 'forgot' && <GoogleButton onAuth={onAuth} onError={setError} />}
+      </form>
+    </div>
+  );
+}
+
+// Pantalla de nueva contraseña (llega desde el enlace del correo: #/reset/TOKEN)
+function ResetPassword({ token, onAuth }: { token: string; onAuth: (user: User) => void }) {
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (password !== confirm) { setError('Las contraseñas no coinciden'); return; }
+    setBusy(true);
+    setError('');
+    try {
+      const data = await post<{ token: string; user: User }>('/api/auth/reset', { token, password });
+      setToken(data.token);
+      location.hash = '';
+      onAuth(data.user);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex h-full items-center justify-center bg-ink [background-image:radial-gradient(ellipse_at_top,#1a1f3a_0%,var(--color-ink)_62%)]">
+      <form onSubmit={submit} className="flex w-[380px] flex-col gap-3.5 rounded-2xl border border-edge bg-panel p-9 shadow-2xl shadow-black/50">
+        <LinkMark />
+        <h1 className="font-display text-[22px] font-extrabold tracking-tight">Nueva contraseña</h1>
+        <p className="text-[13px] text-dim">Elige una contraseña nueva para tu cuenta. Se cerrarán las sesiones abiertas.</p>
+        <input className={inputBase} type="password" placeholder="Nueva contraseña (mín. 8 caracteres)" autoFocus
+          value={password} onChange={(e) => setPassword(e.target.value)} />
+        <input className={inputBase} type="password" placeholder="Repite la contraseña"
+          value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+        {error && <div className="text-[13px] text-danger">{error}</div>}
+        <button className={btnPrimary} disabled={busy || !password}>Guardar y entrar</button>
+        <button type="button" className={btnGhost} onClick={() => { location.hash = ''; location.reload(); }}>
+          Volver al inicio de sesión
         </button>
-        <GoogleButton onAuth={onAuth} onError={setError} />
       </form>
     </div>
   );
@@ -411,6 +491,8 @@ export default function App() {
   }, []);
 
   if (loading) return <div className={`${emptyState} h-screen`}>Cargando…</div>;
+  const resetMatch = location.hash.match(/^#\/reset\/([a-f0-9]{64})$/);
+  if (resetMatch) return <ResetPassword token={resetMatch[1]} onAuth={setUser} />;
   if (!user) return <Login onAuth={setUser} />;
   return <Workspace user={user} onLogout={() => setUser(null)} onUserChanged={refreshUser} />;
 }
