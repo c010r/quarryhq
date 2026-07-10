@@ -227,36 +227,6 @@ export async function initSchema() {
 }
 
 export async function seedIfEmpty() {
-  const hasBoards = await get<{ n: number }>('SELECT COUNT(*)::int AS n FROM boards');
-  if (hasBoards && hasBoards.n > 0) { await seedTemplates(); return; }
-
-  const boardId = await insert("INSERT INTO boards (name) VALUES ('Producto')");
-  const todo = await insert('INSERT INTO lists (board_id, name, position) VALUES ($1, $2, $3)', [boardId, 'Por hacer', 0]);
-  const doing = await insert('INSERT INTO lists (board_id, name, position) VALUES ($1, $2, $3)', [boardId, 'En curso', 1]);
-  const done = await insert('INSERT INTO lists (board_id, name, position) VALUES ($1, $2, $3)', [boardId, 'Hecho', 2]);
-
-  const insCard = 'INSERT INTO cards (list_id, title, description, labels, position) VALUES ($1, $2, $3, $4, $5)';
-  const card1 = await insert(insCard, [todo, 'Diseñar la landing page', 'Ver la nota [[Ideas de diseño]] para referencias.', '["violeta"]', 0]);
-  await insert(insCard, [todo, 'Configurar CI/CD', '', '["azul"]', 1]);
-  const card2 = await insert(insCard, [doing, 'API de autenticación', 'Tokens de sesión + scrypt.', '["verde","rojo"]', 0]);
-  await insert(insCard, [done, 'Elegir el stack', 'React + Express + PostgreSQL.', '[]', 0]);
-
-  const insNote = 'INSERT INTO notes (title, content) VALUES ($1, $2)';
-  const noteIdeas = await insert(insNote, ['Ideas de diseño', '# Ideas de diseño\n\nPaleta oscura con acento violeta.\n\nRelacionado: [[Arquitectura]] y [[Roadmap]].']);
-  const noteArq = await insert(insNote, ['Arquitectura', '# Arquitectura\n\n- SPA en React\n- API REST + WebSockets\n- PostgreSQL como base de datos\n\nVer también [[Roadmap]].']);
-  const noteRoad = await insert(insNote, ['Roadmap', '# Roadmap\n\n1. MVP con tableros, notas y chat\n2. Vinculación entre herramientas\n3. Grafo de conocimiento']);
-
-  await insert('INSERT INTO channels (name) VALUES ($1)', ['general']);
-  await insert('INSERT INTO channels (name) VALUES ($1)', ['desarrollo']);
-
-  const insLink = `INSERT INTO links (source_type, source_id, target_type, target_id, kind)
-                   VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING`;
-  await run(insLink, ['note', noteIdeas, 'note', noteArq, 'wikilink']);
-  await run(insLink, ['note', noteIdeas, 'note', noteRoad, 'wikilink']);
-  await run(insLink, ['note', noteArq, 'note', noteRoad, 'wikilink']);
-  await run(insLink, ['card', card1, 'note', noteIdeas, 'manual']);
-  await run(insLink, ['card', card2, 'note', noteArq, 'manual']);
-
   await seedTemplates();
 }
 
@@ -266,5 +236,5 @@ async function seedTemplates() {
   const ins = 'INSERT INTO templates (name, content) VALUES ($1, $2)';
   await insert(ins, ['Reunión', '# {{titulo}}\n\n**Fecha:** {{fecha}}\n**Asistentes:** \n\n## Agenda\n\n- \n\n## Decisiones\n\n- \n\n## Acciones\n\n- [ ] ']);
   await insert(ins, ['Nota diaria', '# {{titulo}}\n\n#diario\n\n## Hoy\n\n- \n\n## Notas\n\n']);
-  await insert(ins, ['Documento de producto', '# {{titulo}}\n\n#producto\n\n## Problema\n\n\n## Propuesta\n\n\n## Alcance\n\n- \n\n## Enlaces\n\n- [[Roadmap]]\n']);
+  await insert(ins, ['Documento de producto', '# {{titulo}}\n\n#producto\n\n## Problema\n\n\n## Propuesta\n\n\n## Alcance\n\n- \n\n## Enlaces\n\n- \n']);
 }

@@ -84,7 +84,7 @@ npm install
 npm run dev        # servidor API en :3001 + Vite en :5173
 ```
 
-Abre http://localhost:5173, crea una cuenta y listo. El esquema y los datos de ejemplo (tablero "Producto", notas enlazadas, canales y plantillas) se crean automáticamente al arrancar si la base está vacía.
+Abre http://localhost:5173, crea una cuenta y listo. El esquema y las plantillas base se crean automáticamente al arrancar si la base está vacía.
 
 ### Migración desde SQLite
 
@@ -145,7 +145,7 @@ Actualizar: `cd /opt/quarryhq && sudo -u quarryhq git pull && sudo -u quarryhq n
 ```
 server/
   index.ts     # API REST + WebSockets + auth
-  db.ts        # pool de PostgreSQL + esquema + datos de ejemplo
+  db.ts        # pool de PostgreSQL + esquema + plantillas base
 scripts/
   migrate-sqlite-to-pg.ts  # migración única desde la versión SQLite
 client/src/
