@@ -158,7 +158,14 @@ const requirePremium: express.RequestHandler = (req: AuthedRequest, res, next) =
     .catch(next);
 };
 
+// Si ADMIN_HOST está definido (producción: admin.quarryhq.pro), los endpoints
+// de administración solo existen en esa URL: desde la app principal dan 404.
+const ADMIN_HOST = process.env.ADMIN_HOST ?? '';
+
 const requireAdmin: express.RequestHandler = (req: AuthedRequest, res, next) => {
+  if (ADMIN_HOST && req.hostname !== ADMIN_HOST) {
+    return res.status(404).json({ error: 'No encontrado' });
+  }
   get<{ is_admin: number }>('SELECT is_admin FROM users WHERE id = $1', [req.userId!])
     .then((row) => {
       if (!row?.is_admin) return res.status(403).json({ error: 'Solo administradores' });

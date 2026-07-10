@@ -194,6 +194,36 @@ function Login({ onAuth }: { onAuth: (user: User) => void }) {
   );
 }
 
+// La administración del SaaS vive en su propia URL (admin.quarryhq.pro /
+// admin.localhost en dev); la app principal no expone nada de admin.
+const IS_ADMIN_HOST = location.hostname.startsWith('admin.');
+
+function AdminShell({ user, onLogout }: { user: User; onLogout: () => void }) {
+  async function logout() {
+    try { await post('/api/logout'); } catch { /* la sesión ya no existe */ }
+    setToken(null);
+    onLogout();
+  }
+
+  return (
+    <div className="flex h-full flex-col">
+      <div className="flex items-center gap-3 border-b border-edge bg-panel px-5 py-3">
+        <span className="font-display text-[16px] font-bold tracking-tight">
+          QuarryHQ <span className="text-accent">Admin</span>
+        </span>
+        <span className="ml-auto flex items-center gap-2 text-[13px] text-dim">
+          {user.picture && <img src={user.picture} alt="" referrerPolicy="no-referrer" className="h-5 w-5 rounded-full" />}
+          {user.name ?? `@${user.username}`}
+        </span>
+        <button className={btnGhost} onClick={logout}>Salir</button>
+      </div>
+      {user.is_admin
+        ? <AdminView />
+        : <div className={`${emptyState} flex-1`}>Tu cuenta no tiene permisos de administración.</div>}
+    </div>
+  );
+}
+
 // Pantalla de nueva contraseña (llega desde el enlace del correo: #/reset/TOKEN)
 function ResetPassword({ token, onAuth }: { token: string; onAuth: (user: User) => void }) {
   const [password, setPassword] = useState('');
@@ -417,11 +447,6 @@ function Workspace({ user, onLogout, onUserChanged }: {
           <button className={sideItem(section === 'graph')} onClick={() => navigate('/graph')}>
             <span className={sideIcon}>◉</span><span className={sideLabel}>Grafo de conocimiento</span>
           </button>
-          {!!user.is_admin && (
-            <button className={sideItem(section === 'admin')} onClick={() => navigate('/admin')}>
-              <span className={sideIcon}>⚙</span><span className={sideLabel}>Administración</span>
-            </button>
-          )}
         </div>
 
         <div className="mt-auto">
@@ -459,7 +484,6 @@ function Workspace({ user, onLogout, onUserChanged }: {
         )}
         {section === 'chat' && param && <ChatView channelId={Number(param)} user={user} isPremium={isPremium} />}
         {section === 'graph' && <GraphView />}
-        {section === 'admin' && <AdminView />}
         {!section && (
           <div className={emptyState}>
             <h3 className="font-display text-base font-bold text-fg">Bienvenido a QuarryHQ</h3>
@@ -505,5 +529,6 @@ export default function App() {
   const resetMatch = location.hash.match(/^#\/reset\/([a-f0-9]{64})$/);
   if (resetMatch) return <ResetPassword token={resetMatch[1]} onAuth={onAuth} />;
   if (!user) return <Login onAuth={onAuth} />;
+  if (IS_ADMIN_HOST) return <AdminShell user={user} onLogout={() => setUser(null)} />;
   return <Workspace user={user} onLogout={() => setUser(null)} onUserChanged={refreshUser} />;
 }
