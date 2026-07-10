@@ -3,28 +3,43 @@ import http from 'node:http';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
-import { all, get, run, insert, initSchema, seedIfEmpty } from './db.ts';
+import { all, get, run, insert, transaction, initSchema, seedIfEmpty } from './db.ts';
 import { APP_URL, resetPasswordHtml, sendMail, verifyEmailHtml } from './mailer.ts';
 
 const app = express();
 app.set('trust proxy', 1); // nginx delante: req.ip sale de X-Forwarded-For
-app.use(express.json());
+app.disable('x-powered-by');
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  res.setHeader('Content-Security-Policy',
+    "default-src 'self'; script-src 'self' https://accounts.google.com/gsi/client; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://oauth2.googleapis.com; frame-src https://accounts.google.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
+  if (process.env.NODE_ENV === 'production') {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+  next();
+});
+app.use(express.json({ limit: '256kb' }));
+
+type AuthedRequest = express.Request & { userId?: number };
 
 // Envuelve handlers async para que los errores lleguen al middleware de Express 4
-type Handler = (req: express.Request, res: express.Response) => Promise<unknown>;
+type Handler = (req: AuthedRequest, res: express.Response) => Promise<unknown>;
 const h = (fn: Handler): express.RequestHandler => (req, res, next) => {
-  fn(req, res).catch(next);
+  fn(req as AuthedRequest, res).catch(next);
 };
 
 // ---------- WebSockets (tiempo real) ----------
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 const wsClients = new Set<WebSocket>();
+const SESSION_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 
 wss.on('connection', async (socket, req) => {
-  const url = new URL(req.url ?? '', 'http://localhost');
-  const token = url.searchParams.get('token') ?? '';
-  const session = await get('SELECT user_id FROM sessions WHERE token = $1', [token]);
+  const token = cookieValue(req.headers.cookie, 'qhq_session') ?? '';
+  const session = await get('SELECT user_id FROM sessions WHERE token = $1 AND (expires_at IS NULL OR expires_at >= $2)', [token, new Date().toISOString()]);
   if (!session) { socket.close(); return; }
   wsClients.add(socket);
   socket.on('close', () => wsClients.delete(socket));
@@ -38,6 +53,49 @@ function broadcast(event: Record<string, unknown>) {
 }
 
 // ---------- Autenticación ----------
+function sessionExpiresAt(): string {
+  return new Date(Date.now() + SESSION_TTL_MS).toISOString();
+}
+
+async function createSession(userId: number): Promise<string> {
+  const token = crypto.randomBytes(32).toString('hex');
+  await run('INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)', [token, userId, sessionExpiresAt()]);
+  return token;
+}
+
+function cookieValue(header: string | undefined, name: string): string | null {
+  if (!header) return null;
+  for (const part of header.split(';')) {
+    const [rawKey, ...rawValue] = part.trim().split('=');
+    if (rawKey === name) return decodeURIComponent(rawValue.join('='));
+  }
+  return null;
+}
+
+function authTokenFromRequest(req: express.Request): string {
+  const auth = req.headers.authorization ?? '';
+  if (auth.startsWith('Bearer ')) return auth.slice('Bearer '.length);
+  return cookieValue(req.headers.cookie, 'qhq_session') ?? '';
+}
+
+function setSessionCookie(res: express.Response, token: string) {
+  res.cookie('qhq_session', token, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: SESSION_TTL_MS,
+    path: '/',
+  });
+}
+
+function clearSessionCookie(res: express.Response) {
+  res.clearCookie('qhq_session', {
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    path: '/',
+  });
+}
+
 function hashPassword(password: string): string {
   const salt = crypto.randomBytes(16).toString('hex');
   const hash = crypto.scryptSync(password, salt, 64).toString('hex');
@@ -49,8 +107,6 @@ function verifyPassword(password: string, stored: string): boolean {
   const candidate = crypto.scryptSync(password, salt, 64).toString('hex');
   return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(candidate, 'hex'));
 }
-
-type AuthedRequest = express.Request & { userId?: number };
 
 // Rate limiting en memoria para los endpoints de autenticación
 const attempts = new Map<string, { count: number; resetAt: number }>();
@@ -104,10 +160,14 @@ async function consumeAuthToken(token: string, kind: 'verify' | 'reset'): Promis
 }
 
 const requireAuth: express.RequestHandler = (req: AuthedRequest, res, next) => {
-  const token = (req.headers.authorization ?? '').replace('Bearer ', '');
-  get<{ user_id: number }>('SELECT user_id FROM sessions WHERE token = $1', [token])
-    .then((session) => {
-      if (!session) return res.status(401).json({ error: 'No autenticado' });
+  const token = authTokenFromRequest(req);
+  const nowIso = new Date().toISOString();
+  get<{ user_id: number }>('SELECT user_id FROM sessions WHERE token = $1 AND (expires_at IS NULL OR expires_at >= $2)', [token, nowIso])
+    .then(async (session) => {
+      if (!session) {
+        await run('DELETE FROM sessions WHERE token = $1 OR (expires_at IS NOT NULL AND expires_at < $2)', [token, nowIso]);
+        return res.status(401).json({ error: 'No autenticado' });
+      }
       req.userId = session.user_id;
       next();
     })
@@ -185,27 +245,32 @@ function generateInviteCode(): string {
 
 async function redeemInvite(userId: number, rawCode: string): Promise<{ ok: true; days: number } | { ok: false; error: string }> {
   const code = rawCode.trim().toUpperCase();
-  const invite = await get<{ id: number; trial_days: number; max_uses: number; used_count: number }>(
-    'SELECT * FROM invite_codes WHERE code = $1', [code]);
-  if (!invite || invite.used_count >= invite.max_uses) {
-    return { ok: false, error: 'Código de invitación inválido o agotado' };
-  }
-  const prior = await get('SELECT 1 FROM invite_redemptions WHERE user_id = $1', [userId]);
-  if (prior) return { ok: false, error: 'Ya canjeaste un código de invitación' };
+  return transaction(async (client) => {
+    const inviteRes = await client.query<{ id: number; trial_days: number; max_uses: number; used_count: number }>(
+      'SELECT id, trial_days, max_uses, used_count FROM invite_codes WHERE code = $1 FOR UPDATE', [code]);
+    const invite = inviteRes.rows[0];
+    if (!invite || invite.used_count >= invite.max_uses) {
+      return { ok: false, error: 'Código de invitación inválido o agotado' };
+    }
 
-  await run('INSERT INTO invite_redemptions (code_id, user_id) VALUES ($1, $2)', [invite.id, userId]);
-  await run('UPDATE invite_codes SET used_count = used_count + 1 WHERE id = $1', [invite.id]);
+    const prior = await client.query('SELECT 1 FROM invite_redemptions WHERE user_id = $1', [userId]);
+    if (prior.rowCount) return { ok: false, error: 'Ya canjeaste un código de invitación' };
 
-  // Suma los días de prueba al premium existente (o arranca desde hoy)
-  const row = await get<{ plan: string; premium_until: string | null }>(
-    'SELECT plan, premium_until FROM users WHERE id = $1', [userId]);
-  const nowIso = new Date().toISOString();
-  const from = row?.premium_until && row.premium_until > nowIso ? new Date(row.premium_until) : new Date();
-  const until = new Date(from.getTime() + invite.trial_days * 24 * 60 * 60 * 1000).toISOString();
-  const tier = row?.plan === 'team' ? 'team' : 'premium';
-  await run('UPDATE users SET plan = $1, premium_until = $2 WHERE id = $3', [tier, until, userId]);
-  return { ok: true, days: invite.trial_days };
+    await client.query('INSERT INTO invite_redemptions (code_id, user_id) VALUES ($1, $2)', [invite.id, userId]);
+    await client.query('UPDATE invite_codes SET used_count = used_count + 1 WHERE id = $1', [invite.id]);
+
+    const userRes = await client.query<{ plan: string; premium_until: string | null }>(
+      'SELECT plan, premium_until FROM users WHERE id = $1', [userId]);
+    const row = userRes.rows[0];
+    const nowIso = new Date().toISOString();
+    const from = row?.premium_until && row.premium_until > nowIso ? new Date(row.premium_until) : new Date();
+    const until = new Date(from.getTime() + invite.trial_days * 24 * 60 * 60 * 1000).toISOString();
+    const tier = row?.plan === 'team' ? 'team' : 'premium';
+    await client.query('UPDATE users SET plan = $1, premium_until = $2 WHERE id = $3', [tier, until, userId]);
+    return { ok: true, days: invite.trial_days };
+  });
 }
+
 
 // true = puede crear; false = ya respondió 403 por límite del plan Free
 async function withinLimit(req: AuthedRequest, res: express.Response,
@@ -220,6 +285,28 @@ async function withinLimit(req: AuthedRequest, res: express.Response,
     return false;
   }
   return true;
+}
+
+async function boardIdForList(listId: number, userId: number): Promise<number | null> {
+  const row = await get<{ board_id: number }>(
+    'SELECT lists.board_id FROM lists JOIN boards ON boards.id = lists.board_id WHERE lists.id = $1 AND boards.owner_id = $2',
+    [listId, userId]);
+  return row?.board_id ?? null;
+}
+
+async function cardBoardIdForUser(cardId: number, userId: number): Promise<number | null> {
+  const row = await get<{ board_id: number }>(
+    'SELECT lists.board_id FROM cards JOIN lists ON lists.id = cards.list_id JOIN boards ON boards.id = lists.board_id WHERE cards.id = $1 AND boards.owner_id = $2',
+    [cardId, userId]);
+  return row?.board_id ?? null;
+}
+
+async function ownsEntity(type: string, id: number, userId: number): Promise<boolean> {
+  if (type === 'note') return !!(await get('SELECT 1 FROM notes WHERE id = $1 AND owner_id = $2', [id, userId]));
+  if (type === 'channel') return !!(await get('SELECT 1 FROM channels WHERE id = $1 AND owner_id = $2', [id, userId]));
+  if (type === 'message') return !!(await get('SELECT 1 FROM messages JOIN channels ON channels.id = messages.channel_id WHERE messages.id = $1 AND channels.owner_id = $2', [id, userId]));
+  if (type === 'card') return !!(await cardBoardIdForUser(id, userId));
+  return false;
 }
 
 app.post('/api/register', h(async (req, res) => {
@@ -259,8 +346,8 @@ app.post('/api/register', h(async (req, res) => {
   sendMail(email, 'Confirma tu correo en QuarryHQ', verifyEmailHtml(verifyToken))
     .catch((err) => console.error('Error enviando verificación:', err));
 
-  const token = crypto.randomBytes(32).toString('hex');
-  await run('INSERT INTO sessions (token, user_id) VALUES ($1, $2)', [token, userId]);
+  const token = await createSession(userId);
+  setSessionCookie(res, token);
   res.json({ token, user: { id: userId, username, email, plan } });
 }));
 
@@ -276,8 +363,8 @@ app.post('/api/login', h(async (req, res) => {
   if (!user || !user.password_hash || !verifyPassword(password ?? '', user.password_hash)) {
     return res.status(401).json({ error: 'Credenciales inválidas' });
   }
-  const token = crypto.randomBytes(32).toString('hex');
-  await run('INSERT INTO sessions (token, user_id) VALUES ($1, $2)', [token, user.id]);
+  const token = await createSession(user.id);
+  setSessionCookie(res, token);
   res.json({ token, user: { id: user.id, username: user.username, plan: await userPlan(user.id) } });
 }));
 
@@ -314,8 +401,8 @@ app.post('/api/auth/reset', h(async (req, res) => {
   await run('UPDATE users SET password_hash = $1, email_verified = 1 WHERE id = $2', [hashPassword(password), userId]);
   await run('DELETE FROM sessions WHERE user_id = $1', [userId]); // cierra todas las sesiones
   const user = await get<{ id: number; username: string }>('SELECT id, username FROM users WHERE id = $1', [userId]);
-  const session = crypto.randomBytes(32).toString('hex');
-  await run('INSERT INTO sessions (token, user_id) VALUES ($1, $2)', [session, userId]);
+  const session = await createSession(userId);
+  setSessionCookie(res, session);
   res.json({ token: session, user: { ...user, plan: await userPlan(userId) } });
 }));
 
@@ -365,8 +452,8 @@ app.post('/api/auth/google', h(async (req, res) => {
     user = { id: userId, username, name: info.name ?? null, picture: info.picture ?? null };
   }
 
-  const token = crypto.randomBytes(32).toString('hex');
-  await run('INSERT INTO sessions (token, user_id) VALUES ($1, $2)', [token, user.id]);
+  const token = await createSession(user.id);
+  setSessionCookie(res, token);
   res.json({ token, user: { ...user, plan: await userPlan(user.id) } });
 }));
 
@@ -395,9 +482,9 @@ app.get('/api/me', requireAuth, h(async (req: AuthedRequest, res) => {
   }
 
   const [boards, notes, channels] = await Promise.all([
-    get<{ n: number }>('SELECT COUNT(*)::int AS n FROM boards'),
-    get<{ n: number }>('SELECT COUNT(*)::int AS n FROM notes'),
-    get<{ n: number }>('SELECT COUNT(*)::int AS n FROM channels'),
+    get<{ n: number }>('SELECT COUNT(*)::int AS n FROM boards WHERE owner_id = $1', [req.userId!]),
+    get<{ n: number }>('SELECT COUNT(*)::int AS n FROM notes WHERE owner_id = $1', [req.userId!]),
+    get<{ n: number }>('SELECT COUNT(*)::int AS n FROM channels WHERE owner_id = $1', [req.userId!]),
   ]);
   res.json({
     // user.plan es el plan EFECTIVO (lo que desbloquea la UI); subscription es
@@ -411,8 +498,10 @@ app.get('/api/me', requireAuth, h(async (req: AuthedRequest, res) => {
 
 // ---------- Facturación (simulada) ----------
 app.post('/api/billing/upgrade', requireAuth, h(async (req: AuthedRequest, res) => {
-  // Aquí iría la verificación del pago real (Stripe/MercadoPago). La simulación
-  // extiende 30 días desde ahora, o desde el vencimiento si aún queda saldo.
+  if (process.env.NODE_ENV === 'production' && process.env.ALLOW_FAKE_BILLING !== '1') {
+    return res.status(501).json({ error: 'La activación de planes requiere una pasarela de pago configurada' });
+  }
+  // Simulación local: extiende 30 días desde ahora, o desde el vencimiento si aún queda saldo.
   const tier = req.body?.plan === 'team' ? 'team' : 'premium';
   const row = await get<{ premium_until: string | null }>('SELECT premium_until FROM users WHERE id = $1', [req.userId!]);
   const nowIso = new Date().toISOString();
@@ -508,8 +597,9 @@ app.delete('/api/team/members/:userId', requireAuth, h(async (req: AuthedRequest
 }));
 
 app.post('/api/logout', requireAuth, h(async (req: AuthedRequest, res) => {
-  const token = (req.headers.authorization ?? '').replace('Bearer ', '');
-  await run('DELETE FROM sessions WHERE token = $1', [token]);
+  const token = authTokenFromRequest(req);
+  if (token) await run('DELETE FROM sessions WHERE token = $1', [token]);
+  clearSessionCookie(res);
   res.json({ ok: true });
 }));
 
@@ -518,10 +608,10 @@ function extractWikilinks(text: string): string[] {
   return [...text.matchAll(/\[\[([^\[\]]+)\]\]/g)].map((m) => m[1].trim()).filter(Boolean);
 }
 
-async function syncWikilinks(sourceType: string, sourceId: number, text: string, kind: string) {
+async function syncWikilinks(sourceType: string, sourceId: number, text: string, kind: string, ownerId: number) {
   await run('DELETE FROM links WHERE source_type = $1 AND source_id = $2 AND kind = $3', [sourceType, sourceId, kind]);
   for (const title of extractWikilinks(text)) {
-    const note = await get<{ id: number }>('SELECT id FROM notes WHERE LOWER(title) = LOWER($1)', [title]);
+    const note = await get<{ id: number }>('SELECT id FROM notes WHERE owner_id = $1 AND LOWER(title) = LOWER($2)', [ownerId, title]);
     if (note) {
       await run(`INSERT INTO links (source_type, source_id, target_type, target_id, kind)
                  VALUES ($1, $2, 'note', $3, $4) ON CONFLICT DO NOTHING`, [sourceType, sourceId, note.id, kind]);
@@ -530,28 +620,28 @@ async function syncWikilinks(sourceType: string, sourceId: number, text: string,
 }
 
 // ---------- Tableros (Trello) ----------
-app.get('/api/boards', requireAuth, h(async (_req, res) => {
-  res.json({ boards: await all('SELECT * FROM boards ORDER BY id') });
+app.get('/api/boards', requireAuth, h(async (req: AuthedRequest, res) => {
+  res.json({ boards: await all('SELECT * FROM boards WHERE owner_id = $1 ORDER BY id', [req.userId!]) });
 }));
 
 app.post('/api/boards', requireAuth, h(async (req: AuthedRequest, res) => {
   const name = (req.body?.name ?? '').trim();
   if (!name) return res.status(400).json({ error: 'Nombre requerido' });
-  if (!(await withinLimit(req, res, 'SELECT COUNT(*)::int AS n FROM boards', [], FREE_LIMITS.boards, 'tableros'))) return;
-  const boardId = await insert('INSERT INTO boards (name) VALUES ($1)', [name]);
+  if (!(await withinLimit(req, res, 'SELECT COUNT(*)::int AS n FROM boards WHERE owner_id = $1', [req.userId!], FREE_LIMITS.boards, 'tableros'))) return;
+  const boardId = await insert('INSERT INTO boards (owner_id, name) VALUES ($1, $2)', [req.userId!, name]);
   broadcast({ type: 'boards:changed' });
-  res.json({ board: await get('SELECT * FROM boards WHERE id = $1', [boardId]) });
+  res.json({ board: await get('SELECT * FROM boards WHERE id = $1 AND owner_id = $2', [boardId, req.userId!]) });
 }));
 
-app.delete('/api/boards/:id', requireAuth, h(async (req, res) => {
-  await run('DELETE FROM boards WHERE id = $1', [Number(req.params.id)]);
+app.delete('/api/boards/:id', requireAuth, h(async (req: AuthedRequest, res) => {
+  await run('DELETE FROM boards WHERE id = $1 AND owner_id = $2', [Number(req.params.id), req.userId!]);
   broadcast({ type: 'boards:changed' });
   res.json({ ok: true });
 }));
 
-app.get('/api/boards/:id', requireAuth, h(async (req, res) => {
+app.get('/api/boards/:id', requireAuth, h(async (req: AuthedRequest, res) => {
   const boardId = Number(req.params.id);
-  const board = await get('SELECT * FROM boards WHERE id = $1', [boardId]);
+  const board = await get('SELECT * FROM boards WHERE id = $1 AND owner_id = $2', [boardId, req.userId!]);
   if (!board) return res.status(404).json({ error: 'Tablero no encontrado' });
   const lists = await all('SELECT * FROM lists WHERE board_id = $1 ORDER BY position', [boardId]);
   for (const list of lists) {
@@ -567,17 +657,19 @@ app.get('/api/boards/:id', requireAuth, h(async (req, res) => {
   res.json({ board, lists });
 }));
 
-app.post('/api/lists', requireAuth, h(async (req, res) => {
+app.post('/api/lists', requireAuth, h(async (req: AuthedRequest, res) => {
   const { board_id, name } = req.body ?? {};
   if (!board_id || !name?.trim()) return res.status(400).json({ error: 'Datos incompletos' });
+  const board = await get('SELECT id FROM boards WHERE id = $1 AND owner_id = $2', [board_id, req.userId!]);
+  if (!board) return res.status(404).json({ error: 'Tablero no encontrado' });
   const max = await get<{ p: number }>('SELECT COALESCE(MAX(position), -1) AS p FROM lists WHERE board_id = $1', [board_id]);
   const listId = await insert('INSERT INTO lists (board_id, name, position) VALUES ($1, $2, $3)', [board_id, name.trim(), (max?.p ?? -1) + 1]);
   broadcast({ type: 'board:changed', boardId: board_id });
   res.json({ list: await get('SELECT * FROM lists WHERE id = $1', [listId]) });
 }));
 
-app.patch('/api/lists/:id', requireAuth, h(async (req, res) => {
-  const list = await get('SELECT * FROM lists WHERE id = $1', [Number(req.params.id)]);
+app.patch('/api/lists/:id', requireAuth, h(async (req: AuthedRequest, res) => {
+  const list = await get('SELECT lists.* FROM lists JOIN boards ON boards.id = lists.board_id WHERE lists.id = $1 AND boards.owner_id = $2', [Number(req.params.id), req.userId!]);
   if (!list) return res.status(404).json({ error: 'Lista no encontrada' });
   const name = req.body?.name?.trim() || list.name;
   await run('UPDATE lists SET name = $1 WHERE id = $2', [name, list.id]);
@@ -585,8 +677,8 @@ app.patch('/api/lists/:id', requireAuth, h(async (req, res) => {
   res.json({ ok: true });
 }));
 
-app.delete('/api/lists/:id', requireAuth, h(async (req, res) => {
-  const list = await get('SELECT * FROM lists WHERE id = $1', [Number(req.params.id)]);
+app.delete('/api/lists/:id', requireAuth, h(async (req: AuthedRequest, res) => {
+  const list = await get('SELECT lists.* FROM lists JOIN boards ON boards.id = lists.board_id WHERE lists.id = $1 AND boards.owner_id = $2', [Number(req.params.id), req.userId!]);
   if (!list) return res.status(404).json({ error: 'Lista no encontrada' });
   await run('DELETE FROM lists WHERE id = $1', [list.id]);
   broadcast({ type: 'board:changed', boardId: list.board_id });
@@ -596,36 +688,39 @@ app.delete('/api/lists/:id', requireAuth, h(async (req, res) => {
 app.post('/api/cards', requireAuth, h(async (req: AuthedRequest, res) => {
   const { list_id, title } = req.body ?? {};
   if (!list_id || !title?.trim()) return res.status(400).json({ error: 'Datos incompletos' });
-  const list = await get<{ board_id: number }>('SELECT board_id FROM lists WHERE id = $1', [list_id]);
+  const list = await get<{ board_id: number }>('SELECT lists.board_id FROM lists JOIN boards ON boards.id = lists.board_id WHERE lists.id = $1 AND boards.owner_id = $2', [list_id, req.userId!]);
   if (!list) return res.status(404).json({ error: 'Lista no encontrada' });
   if (!(await withinLimit(req, res,
-    'SELECT COUNT(*)::int AS n FROM cards JOIN lists ON lists.id = cards.list_id WHERE lists.board_id = $1',
-    [list.board_id], FREE_LIMITS.cardsPerBoard, 'tarjetas por tablero'))) return;
+    'SELECT COUNT(*)::int AS n FROM cards JOIN lists ON lists.id = cards.list_id JOIN boards ON boards.id = lists.board_id WHERE lists.board_id = $1 AND boards.owner_id = $2',
+    [list.board_id, req.userId!], FREE_LIMITS.cardsPerBoard, 'tarjetas por tablero'))) return;
   const max = await get<{ p: number }>('SELECT COALESCE(MAX(position), -1) AS p FROM cards WHERE list_id = $1', [list_id]);
   const cardId = await insert('INSERT INTO cards (list_id, title, position) VALUES ($1, $2, $3)', [list_id, title.trim(), (max?.p ?? -1) + 1]);
   broadcast({ type: 'board:changed', boardId: list.board_id });
-  res.json({ card: await get('SELECT * FROM cards WHERE id = $1', [cardId]) });
+  res.json({ card: await get('SELECT cards.* FROM cards JOIN lists ON lists.id = cards.list_id JOIN boards ON boards.id = lists.board_id WHERE cards.id = $1 AND boards.owner_id = $2', [cardId, req.userId!]) });
 }));
 
 app.get('/api/cards/:id', requireAuth, h(async (req, res) => {
   const cardId = Number(req.params.id);
   const card = await get(`
     SELECT cards.*, lists.name AS list_name, lists.board_id
-    FROM cards JOIN lists ON lists.id = cards.list_id WHERE cards.id = $1
-  `, [cardId]);
+    FROM cards
+    JOIN lists ON lists.id = cards.list_id
+    JOIN boards ON boards.id = lists.board_id
+    WHERE cards.id = $1 AND boards.owner_id = $2
+  `, [cardId, req.userId!]);
   if (!card) return res.status(404).json({ error: 'Tarjeta no encontrada' });
 
   const linkedNotes = await all(`
     SELECT notes.id, notes.title, links.id AS link_id, links.kind
     FROM links JOIN notes ON notes.id = links.target_id
-    WHERE links.source_type = 'card' AND links.source_id = $1 AND links.target_type = 'note'
-  `, [cardId]);
+    WHERE links.source_type = 'card' AND links.source_id = $1 AND links.target_type = 'note' AND notes.owner_id = $2
+  `, [cardId, req.userId!]);
 
   const discussion = await get(`
     SELECT channels.id, channels.name
     FROM links JOIN channels ON channels.id = links.target_id
-    WHERE links.source_type = 'card' AND links.source_id = $1 AND links.target_type = 'channel' AND links.kind = 'discussion'
-  `, [cardId]) ?? null;
+    WHERE links.source_type = 'card' AND links.source_id = $1 AND links.target_type = 'channel' AND links.kind = 'discussion' AND channels.owner_id = $2
+  `, [cardId, req.userId!]) ?? null;
 
   const mentions = await all(`
     SELECT links.source_type, links.source_id,
@@ -650,25 +745,28 @@ app.get('/api/cards/:id', requireAuth, h(async (req, res) => {
 }));
 
 app.patch('/api/cards/:id', requireAuth, h(async (req, res) => {
-  const card = await get('SELECT cards.*, lists.board_id FROM cards JOIN lists ON lists.id = cards.list_id WHERE cards.id = $1', [Number(req.params.id)]);
+  const card = await get('SELECT cards.*, lists.board_id FROM cards JOIN lists ON lists.id = cards.list_id JOIN boards ON boards.id = lists.board_id WHERE cards.id = $1 AND boards.owner_id = $2', [Number(req.params.id), req.userId!]);
   if (!card) return res.status(404).json({ error: 'Tarjeta no encontrada' });
   const title = req.body?.title?.trim() || card.title;
   const description = req.body?.description ?? card.description;
   const labels = req.body?.labels !== undefined ? JSON.stringify(req.body.labels) : card.labels;
   const dueDate = req.body?.due_date !== undefined ? (req.body.due_date || null) : card.due_date;
   const completed = req.body?.completed !== undefined ? (req.body.completed ? 1 : 0) : card.completed;
-  await run('UPDATE cards SET title = $1, description = $2, labels = $3, due_date = $4, completed = $5 WHERE id = $6',
-    [title, description, labels, dueDate, completed, card.id]);
-  await syncWikilinks('card', card.id, description, 'wikilink');
+  await run(`UPDATE cards SET title = $1, description = $2, labels = $3, due_date = $4, completed = $5
+    WHERE id = $6 AND EXISTS (
+      SELECT 1 FROM lists JOIN boards ON boards.id = lists.board_id
+      WHERE lists.id = cards.list_id AND boards.owner_id = $7
+    )`, [title, description, labels, dueDate, completed, card.id, req.userId!]);
+  await syncWikilinks('card', card.id, description, 'wikilink', req.userId!);
   broadcast({ type: 'board:changed', boardId: card.board_id });
-  res.json({ card: await get('SELECT * FROM cards WHERE id = $1', [card.id]) });
+  res.json({ card: await get('SELECT cards.* FROM cards JOIN lists ON lists.id = cards.list_id JOIN boards ON boards.id = lists.board_id WHERE cards.id = $1 AND boards.owner_id = $2', [card.id, req.userId!]) });
 }));
 
 app.post('/api/cards/:id/move', requireAuth, h(async (req, res) => {
   const cardId = Number(req.params.id);
   const { list_id, index } = req.body ?? {};
-  const card = await get('SELECT cards.*, lists.board_id FROM cards JOIN lists ON lists.id = cards.list_id WHERE cards.id = $1', [cardId]);
-  const target = await get('SELECT * FROM lists WHERE id = $1', [list_id]);
+  const card = await get('SELECT cards.*, lists.board_id FROM cards JOIN lists ON lists.id = cards.list_id JOIN boards ON boards.id = lists.board_id WHERE cards.id = $1 AND boards.owner_id = $2', [cardId, req.userId!]);
+  const target = await get('SELECT lists.* FROM lists JOIN boards ON boards.id = lists.board_id WHERE lists.id = $1 AND boards.owner_id = $2', [list_id, req.userId!]);
   if (!card || !target) return res.status(404).json({ error: 'Tarjeta o lista no encontrada' });
 
   const siblings = (await all<{ id: number }>('SELECT id FROM cards WHERE list_id = $1 AND id != $2 ORDER BY position', [list_id, cardId])).map((r) => r.id);
@@ -687,7 +785,7 @@ app.post('/api/cards/:id/move', requireAuth, h(async (req, res) => {
 }));
 
 app.delete('/api/cards/:id', requireAuth, h(async (req, res) => {
-  const card = await get('SELECT cards.*, lists.board_id FROM cards JOIN lists ON lists.id = cards.list_id WHERE cards.id = $1', [Number(req.params.id)]);
+  const card = await get('SELECT cards.*, lists.board_id FROM cards JOIN lists ON lists.id = cards.list_id JOIN boards ON boards.id = lists.board_id WHERE cards.id = $1 AND boards.owner_id = $2', [Number(req.params.id), req.userId!]);
   if (!card) return res.status(404).json({ error: 'Tarjeta no encontrada' });
   await run('DELETE FROM cards WHERE id = $1', [card.id]);
   await run("DELETE FROM links WHERE (source_type = 'card' AND source_id = $1) OR (target_type = 'card' AND target_id = $1)", [card.id]);
@@ -716,28 +814,31 @@ async function applyRules(cardId: number, listId: number) {
   }
 }
 
-app.get('/api/boards/:id/rules', requireAuth, h(async (req, res) => {
+app.get('/api/boards/:id/rules', requireAuth, h(async (req: AuthedRequest, res) => {
   const rules = await all(`
     SELECT board_rules.*, lists.name AS list_name FROM board_rules
     JOIN lists ON lists.id = board_rules.list_id
-    WHERE board_rules.board_id = $1 ORDER BY board_rules.id
-  `, [Number(req.params.id)]);
+    JOIN boards ON boards.id = board_rules.board_id
+    WHERE board_rules.board_id = $1 AND boards.owner_id = $2 ORDER BY board_rules.id
+  `, [Number(req.params.id), req.userId!]);
   res.json({ rules });
 }));
 
-app.post('/api/boards/:id/rules', requireAuth, requirePremium, h(async (req, res) => {
+app.post('/api/boards/:id/rules', requireAuth, requirePremium, h(async (req: AuthedRequest, res) => {
   const boardId = Number(req.params.id);
   const { list_id, action, param } = req.body ?? {};
   const validActions = ['complete', 'uncomplete', 'label', 'due_today', 'clear_due'];
-  if (!list_id || !validActions.includes(action)) return res.status(400).json({ error: 'Regla inválida' });
+  const listBoardId = list_id ? await boardIdForList(Number(list_id), req.userId!) : null;
+  if (!list_id || !validActions.includes(action) || listBoardId !== boardId) return res.status(400).json({ error: 'Regla inválida' });
   await insert('INSERT INTO board_rules (board_id, list_id, action, param) VALUES ($1, $2, $3, $4)',
     [boardId, list_id, action, param ?? '']);
   broadcast({ type: 'board:changed', boardId });
   res.json({ ok: true });
 }));
 
-app.delete('/api/rules/:id', requireAuth, h(async (req, res) => {
-  const rule = await get<{ board_id: number }>('SELECT board_id FROM board_rules WHERE id = $1', [Number(req.params.id)]);
+app.delete('/api/rules/:id', requireAuth, h(async (req: AuthedRequest, res) => {
+  const rule = await get<{ board_id: number }>('SELECT board_rules.board_id FROM board_rules JOIN boards ON boards.id = board_rules.board_id WHERE board_rules.id = $1 AND boards.owner_id = $2', [Number(req.params.id), req.userId!]);
+  if (!rule) return res.status(404).json({ error: 'Regla no encontrada' });
   await run('DELETE FROM board_rules WHERE id = $1', [Number(req.params.id)]);
   if (rule) broadcast({ type: 'board:changed', boardId: rule.board_id });
   res.json({ ok: true });
@@ -749,18 +850,20 @@ async function cardBoardId(cardId: number): Promise<number | null> {
   return row?.board_id ?? null;
 }
 
-app.post('/api/cards/:id/checklist', requireAuth, h(async (req, res) => {
+app.post('/api/cards/:id/checklist', requireAuth, h(async (req: AuthedRequest, res) => {
   const cardId = Number(req.params.id);
+  const boardId = await cardBoardIdForUser(cardId, req.userId!);
+  if (!boardId) return res.status(404).json({ error: 'Tarjeta no encontrada' });
   const text = (req.body?.text ?? '').trim();
   if (!text) return res.status(400).json({ error: 'Texto requerido' });
   const max = await get<{ p: number }>('SELECT COALESCE(MAX(position), -1) AS p FROM checklist_items WHERE card_id = $1', [cardId]);
   await insert('INSERT INTO checklist_items (card_id, text, position) VALUES ($1, $2, $3)', [cardId, text, (max?.p ?? -1) + 1]);
-  broadcast({ type: 'board:changed', boardId: await cardBoardId(cardId) });
+  broadcast({ type: 'board:changed', boardId });
   res.json({ ok: true });
 }));
 
-app.patch('/api/checklist/:id', requireAuth, h(async (req, res) => {
-  const item = await get('SELECT * FROM checklist_items WHERE id = $1', [Number(req.params.id)]);
+app.patch('/api/checklist/:id', requireAuth, h(async (req: AuthedRequest, res) => {
+  const item = await get('SELECT checklist_items.* FROM checklist_items JOIN cards ON cards.id = checklist_items.card_id JOIN lists ON lists.id = cards.list_id JOIN boards ON boards.id = lists.board_id WHERE checklist_items.id = $1 AND boards.owner_id = $2', [Number(req.params.id), req.userId!]);
   if (!item) return res.status(404).json({ error: 'Elemento no encontrado' });
   const text = req.body?.text?.trim() || item.text;
   const done = req.body?.done !== undefined ? (req.body.done ? 1 : 0) : item.done;
@@ -769,8 +872,8 @@ app.patch('/api/checklist/:id', requireAuth, h(async (req, res) => {
   res.json({ ok: true });
 }));
 
-app.delete('/api/checklist/:id', requireAuth, h(async (req, res) => {
-  const item = await get<{ card_id: number }>('SELECT card_id FROM checklist_items WHERE id = $1', [Number(req.params.id)]);
+app.delete('/api/checklist/:id', requireAuth, h(async (req: AuthedRequest, res) => {
+  const item = await get<{ card_id: number }>('SELECT checklist_items.card_id FROM checklist_items JOIN cards ON cards.id = checklist_items.card_id JOIN lists ON lists.id = cards.list_id JOIN boards ON boards.id = lists.board_id WHERE checklist_items.id = $1 AND boards.owner_id = $2', [Number(req.params.id), req.userId!]);
   await run('DELETE FROM checklist_items WHERE id = $1', [Number(req.params.id)]);
   if (item) broadcast({ type: 'board:changed', boardId: await cardBoardId(item.card_id) });
   res.json({ ok: true });
@@ -781,42 +884,46 @@ app.get('/api/users', requireAuth, h(async (_req, res) => {
   res.json({ users: await all('SELECT id, username FROM users ORDER BY username') });
 }));
 
-app.post('/api/cards/:id/members', requireAuth, h(async (req, res) => {
+app.post('/api/cards/:id/members', requireAuth, h(async (req: AuthedRequest, res) => {
   const cardId = Number(req.params.id);
+  const boardId = await cardBoardIdForUser(cardId, req.userId!);
+  if (!boardId) return res.status(404).json({ error: 'Tarjeta no encontrada' });
   const userId = Number(req.body?.user_id);
   if (!userId) return res.status(400).json({ error: 'Usuario requerido' });
   await run('INSERT INTO card_members (card_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [cardId, userId]);
-  broadcast({ type: 'board:changed', boardId: await cardBoardId(cardId) });
+  broadcast({ type: 'board:changed', boardId });
   res.json({ ok: true });
 }));
 
-app.delete('/api/cards/:id/members/:userId', requireAuth, h(async (req, res) => {
+app.delete('/api/cards/:id/members/:userId', requireAuth, h(async (req: AuthedRequest, res) => {
   const cardId = Number(req.params.id);
+  const boardId = await cardBoardIdForUser(cardId, req.userId!);
+  if (!boardId) return res.status(404).json({ error: 'Tarjeta no encontrada' });
   await run('DELETE FROM card_members WHERE card_id = $1 AND user_id = $2', [cardId, Number(req.params.userId)]);
-  broadcast({ type: 'board:changed', boardId: await cardBoardId(cardId) });
+  broadcast({ type: 'board:changed', boardId });
   res.json({ ok: true });
 }));
 
 // Crea (o devuelve) el canal de discusión vinculado a una tarjeta
 app.post('/api/cards/:id/discussion', requireAuth, h(async (req, res) => {
   const cardId = Number(req.params.id);
-  const card = await get<{ title: string }>('SELECT * FROM cards WHERE id = $1', [cardId]);
+  const card = await get<{ title: string }>('SELECT cards.title FROM cards JOIN lists ON lists.id = cards.list_id JOIN boards ON boards.id = lists.board_id WHERE cards.id = $1 AND boards.owner_id = $2', [cardId, req.userId!]);
   if (!card) return res.status(404).json({ error: 'Tarjeta no encontrada' });
 
   const existing = await get(`
     SELECT channels.id, channels.name FROM links
     JOIN channels ON channels.id = links.target_id
-    WHERE links.source_type = 'card' AND links.source_id = $1 AND links.target_type = 'channel' AND links.kind = 'discussion'
-  `, [cardId]);
+    WHERE links.source_type = 'card' AND links.source_id = $1 AND links.target_type = 'channel' AND links.kind = 'discussion' AND channels.owner_id = $2
+  `, [cardId, req.userId!]);
   if (existing) return res.json({ channel: existing });
-  if (!(await withinLimit(req as AuthedRequest, res, 'SELECT COUNT(*)::int AS n FROM channels', [], FREE_LIMITS.channels, 'canales'))) return;
+  if (!(await withinLimit(req as AuthedRequest, res, 'SELECT COUNT(*)::int AS n FROM channels WHERE owner_id = $1', [req.userId!], FREE_LIMITS.channels, 'canales'))) return;
 
   const slugBase = 'tarjeta-' + card.title.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
   let slug = slugBase || `tarjeta-${cardId}`;
   let suffix = 1;
-  while (await get('SELECT id FROM channels WHERE name = $1', [slug])) slug = `${slugBase}-${++suffix}`;
+  while (await get('SELECT id FROM channels WHERE owner_id = $1 AND name = $2', [req.userId!, slug])) slug = `${slugBase}-${++suffix}`;
 
-  const channelId = await insert('INSERT INTO channels (name) VALUES ($1)', [slug]);
+  const channelId = await insert('INSERT INTO channels (owner_id, name) VALUES ($1, $2)', [req.userId!, slug]);
   await run(`INSERT INTO links (source_type, source_id, target_type, target_id, kind)
              VALUES ('card', $1, 'channel', $2, 'discussion') ON CONFLICT DO NOTHING`, [cardId, channelId]);
   broadcast({ type: 'channels:changed' });
@@ -832,20 +939,20 @@ async function syncTags(noteId: number, content: string) {
   }
 }
 
-app.get('/api/notes', requireAuth, h(async (req, res) => {
+app.get('/api/notes', requireAuth, h(async (req: AuthedRequest, res) => {
   const tag = String(req.query.tag ?? '').trim().toLowerCase();
   const notes = tag
     ? await all(`
         SELECT notes.id, notes.title, notes.updated_at FROM notes
         JOIN note_tags ON note_tags.note_id = notes.id
-        WHERE note_tags.tag = $1 ORDER BY notes.updated_at DESC
-      `, [tag])
-    : await all('SELECT id, title, updated_at FROM notes ORDER BY updated_at DESC');
+        WHERE notes.owner_id = $1 AND note_tags.tag = $2 ORDER BY notes.updated_at DESC
+      `, [req.userId!, tag])
+    : await all('SELECT id, title, updated_at FROM notes WHERE owner_id = $1 ORDER BY updated_at DESC', [req.userId!]);
   res.json({ notes });
 }));
 
-app.get('/api/tags', requireAuth, h(async (_req, res) => {
-  res.json({ tags: await all('SELECT tag, COUNT(*) AS count FROM note_tags GROUP BY tag ORDER BY count DESC, tag') });
+app.get('/api/tags', requireAuth, h(async (req: AuthedRequest, res) => {
+  res.json({ tags: await all('SELECT tag, COUNT(*) AS count FROM note_tags JOIN notes ON notes.id = note_tags.note_id WHERE notes.owner_id = $1 GROUP BY tag ORDER BY count DESC, tag', [req.userId!]) });
 }));
 
 function fillTemplate(content: string, title: string): string {
@@ -857,44 +964,44 @@ function fillTemplate(content: string, title: string): string {
 app.post('/api/notes', requireAuth, h(async (req: AuthedRequest, res) => {
   const title = (req.body?.title ?? '').trim();
   if (!title) return res.status(400).json({ error: 'Título requerido' });
-  const existing = await get('SELECT * FROM notes WHERE LOWER(title) = LOWER($1)', [title]);
+  const existing = await get('SELECT * FROM notes WHERE owner_id = $1 AND LOWER(title) = LOWER($2)', [req.userId!, title]);
   if (existing) return res.json({ note: existing, existed: true });
-  if (!(await withinLimit(req, res, 'SELECT COUNT(*)::int AS n FROM notes', [], FREE_LIMITS.notes, 'notas'))) return;
+  if (!(await withinLimit(req, res, 'SELECT COUNT(*)::int AS n FROM notes WHERE owner_id = $1', [req.userId!], FREE_LIMITS.notes, 'notas'))) return;
   let content = `# ${title}\n\n`;
   if (req.body?.template_id) {
-    const template = await get<{ content: string }>('SELECT content FROM templates WHERE id = $1', [Number(req.body.template_id)]);
+    const template = await get<{ content: string }>('SELECT content FROM templates WHERE id = $1 AND (owner_id = $2 OR owner_id IS NULL)', [Number(req.body.template_id), req.userId!]);
     if (template) content = fillTemplate(template.content, title);
   }
-  const noteId = await insert('INSERT INTO notes (title, content) VALUES ($1, $2)', [title, content]);
+  const noteId = await insert('INSERT INTO notes (owner_id, title, content) VALUES ($1, $2, $3)', [req.userId!, title, content]);
   await syncTags(noteId, content);
-  await syncWikilinks('note', noteId, content, 'wikilink');
+  await syncWikilinks('note', noteId, content, 'wikilink', req.userId!);
   broadcast({ type: 'notes:changed' });
-  res.json({ note: await get('SELECT * FROM notes WHERE id = $1', [noteId]) });
+  res.json({ note: await get('SELECT * FROM notes WHERE id = $1 AND owner_id = $2', [noteId, req.userId!]) });
 }));
 
 // ---------- Plantillas ----------
-app.get('/api/templates', requireAuth, h(async (_req, res) => {
-  res.json({ templates: await all('SELECT * FROM templates ORDER BY name') });
+app.get('/api/templates', requireAuth, h(async (req: AuthedRequest, res) => {
+  res.json({ templates: await all('SELECT * FROM templates WHERE owner_id = $1 OR owner_id IS NULL ORDER BY owner_id NULLS FIRST, name', [req.userId!]) });
 }));
 
 app.post('/api/templates', requireAuth, requirePremium, h(async (req, res) => {
   const name = (req.body?.name ?? '').trim();
   const content = req.body?.content ?? '';
   if (!name) return res.status(400).json({ error: 'Nombre requerido' });
-  const existing = await get('SELECT id FROM templates WHERE name = $1', [name]);
+  const existing = await get('SELECT id FROM templates WHERE owner_id = $1 AND name = $2', [req.userId!, name]);
   if (existing) return res.status(409).json({ error: 'Ya existe una plantilla con ese nombre' });
-  await insert('INSERT INTO templates (name, content) VALUES ($1, $2)', [name, content]);
+  await insert('INSERT INTO templates (owner_id, name, content) VALUES ($1, $2, $3)', [req.userId!, name, content]);
   res.json({ ok: true });
 }));
 
 app.delete('/api/templates/:id', requireAuth, requirePremium, h(async (req, res) => {
-  await run('DELETE FROM templates WHERE id = $1', [Number(req.params.id)]);
+  await run('DELETE FROM templates WHERE id = $1 AND owner_id = $2', [Number(req.params.id), req.userId!]);
   res.json({ ok: true });
 }));
 
 app.get('/api/notes/:id', requireAuth, h(async (req, res) => {
   const noteId = Number(req.params.id);
-  const note = await get('SELECT * FROM notes WHERE id = $1', [noteId]);
+  const note = await get('SELECT * FROM notes WHERE id = $1 AND owner_id = $2', [noteId, req.userId!]);
   if (!note) return res.status(404).json({ error: 'Nota no encontrada' });
 
   const backlinks = await all(`
@@ -914,14 +1021,14 @@ app.get('/api/notes/:id', requireAuth, h(async (req, res) => {
   const outgoing = await all(`
     SELECT notes.id, notes.title FROM links
     JOIN notes ON notes.id = links.target_id
-    WHERE links.source_type = 'note' AND links.source_id = $1 AND links.target_type = 'note'
-  `, [noteId]);
+    WHERE links.source_type = 'note' AND links.source_id = $1 AND links.target_type = 'note' AND notes.owner_id = $2
+  `, [noteId, req.userId!]);
 
   res.json({ note, backlinks, outgoing });
 }));
 
 app.patch('/api/notes/:id', requireAuth, h(async (req, res) => {
-  const note = await get('SELECT * FROM notes WHERE id = $1', [Number(req.params.id)]);
+  const note = await get('SELECT * FROM notes WHERE id = $1 AND owner_id = $2', [Number(req.params.id), req.userId!]);
   if (!note) return res.status(404).json({ error: 'Nota no encontrada' });
   const title = req.body?.title?.trim() || note.title;
   const content = req.body?.content ?? note.content;
@@ -941,12 +1048,12 @@ app.patch('/api/notes/:id', requireAuth, h(async (req, res) => {
     `, [note.id]);
   }
 
-  await run(`UPDATE notes SET title = $1, content = $2, updated_at = to_char(now() at time zone 'utc', 'YYYY-MM-DD HH24:MI:SS') WHERE id = $3`,
-    [title, content, note.id]);
-  await syncWikilinks('note', note.id, content, 'wikilink');
+  await run(`UPDATE notes SET title = $1, content = $2, updated_at = to_char(now() at time zone 'utc', 'YYYY-MM-DD HH24:MI:SS') WHERE id = $3 AND owner_id = $4`,
+    [title, content, note.id, req.userId!]);
+  await syncWikilinks('note', note.id, content, 'wikilink', req.userId!);
   await syncTags(note.id, content);
   broadcast({ type: 'notes:changed' });
-  res.json({ note: await get('SELECT * FROM notes WHERE id = $1', [note.id]) });
+  res.json({ note: await get('SELECT * FROM notes WHERE id = $1 AND owner_id = $2', [note.id, req.userId!]) });
 }));
 
 app.get('/api/notes/:id/versions', requireAuth, h(async (req: AuthedRequest, res) => {
@@ -954,36 +1061,36 @@ app.get('/api/notes/:id/versions', requireAuth, h(async (req: AuthedRequest, res
   const plan = await userPlan(req.userId!);
   const versions = await all(`
     SELECT id, title, created_at, length(content) AS size
-    FROM note_versions WHERE note_id = $1 ORDER BY id DESC
+    FROM note_versions JOIN notes ON notes.id = note_versions.note_id WHERE note_id = $1 AND notes.owner_id = $2 ORDER BY note_versions.id DESC
     ${plan === 'free' ? `LIMIT ${FREE_LIMITS.noteVersions}` : ''}
-  `, [Number(req.params.id)]);
+  `, [Number(req.params.id), req.userId!]);
   res.json({ versions });
 }));
 
 app.get('/api/versions/:id', requireAuth, h(async (req, res) => {
-  const version = await get('SELECT * FROM note_versions WHERE id = $1', [Number(req.params.id)]);
+  const version = await get('SELECT note_versions.* FROM note_versions JOIN notes ON notes.id = note_versions.note_id WHERE note_versions.id = $1 AND notes.owner_id = $2', [Number(req.params.id), req.userId!]);
   if (!version) return res.status(404).json({ error: 'Versión no encontrada' });
   res.json({ version });
 }));
 
 app.post('/api/notes/:id/restore', requireAuth, requirePremium, h(async (req, res) => {
   const noteId = Number(req.params.id);
-  const note = await get('SELECT * FROM notes WHERE id = $1', [noteId]);
-  const version = await get('SELECT * FROM note_versions WHERE id = $1 AND note_id = $2', [Number(req.body?.version_id), noteId]);
+  const note = await get('SELECT * FROM notes WHERE id = $1 AND owner_id = $2', [noteId, req.userId!]);
+  const version = await get('SELECT note_versions.* FROM note_versions JOIN notes ON notes.id = note_versions.note_id WHERE note_versions.id = $1 AND note_versions.note_id = $2 AND notes.owner_id = $3', [Number(req.body?.version_id), noteId, req.userId!]);
   if (!note || !version) return res.status(404).json({ error: 'Nota o versión no encontrada' });
   // El estado actual pasa al historial antes de restaurar
   await insert('INSERT INTO note_versions (note_id, title, content) VALUES ($1, $2, $3)', [noteId, note.title, note.content]);
-  await run(`UPDATE notes SET title = $1, content = $2, updated_at = to_char(now() at time zone 'utc', 'YYYY-MM-DD HH24:MI:SS') WHERE id = $3`,
-    [version.title, version.content, noteId]);
-  await syncWikilinks('note', noteId, version.content, 'wikilink');
+  await run(`UPDATE notes SET title = $1, content = $2, updated_at = to_char(now() at time zone 'utc', 'YYYY-MM-DD HH24:MI:SS') WHERE id = $3 AND owner_id = $4`,
+    [version.title, version.content, noteId, req.userId!]);
+  await syncWikilinks('note', noteId, version.content, 'wikilink', req.userId!);
   await syncTags(noteId, version.content);
   broadcast({ type: 'notes:changed' });
-  res.json({ note: await get('SELECT * FROM notes WHERE id = $1', [noteId]) });
+  res.json({ note: await get('SELECT * FROM notes WHERE id = $1 AND owner_id = $2', [noteId, req.userId!]) });
 }));
 
 app.delete('/api/notes/:id', requireAuth, h(async (req, res) => {
   const noteId = Number(req.params.id);
-  await run('DELETE FROM notes WHERE id = $1', [noteId]);
+  await run('DELETE FROM notes WHERE id = $1 AND owner_id = $2', [noteId, req.userId!]);
   await run("DELETE FROM links WHERE (source_type = 'note' AND source_id = $1) OR (target_type = 'note' AND target_id = $1)", [noteId]);
   broadcast({ type: 'notes:changed' });
   res.json({ ok: true });
@@ -993,35 +1100,35 @@ app.delete('/api/notes/:id', requireAuth, h(async (req, res) => {
 app.post('/api/notes/resolve', requireAuth, h(async (req, res) => {
   const title = (req.body?.title ?? '').trim();
   if (!title) return res.status(400).json({ error: 'Título requerido' });
-  let note = await get('SELECT * FROM notes WHERE LOWER(title) = LOWER($1)', [title]);
+  let note = await get('SELECT * FROM notes WHERE owner_id = $1 AND LOWER(title) = LOWER($2)', [req.userId!, title]);
   if (!note) {
-    if (!(await withinLimit(req as AuthedRequest, res, 'SELECT COUNT(*)::int AS n FROM notes', [], FREE_LIMITS.notes, 'notas'))) return;
-    const noteId = await insert('INSERT INTO notes (title, content) VALUES ($1, $2)', [title, `# ${title}\n\n`]);
-    note = await get('SELECT * FROM notes WHERE id = $1', [noteId]);
+    if (!(await withinLimit(req as AuthedRequest, res, 'SELECT COUNT(*)::int AS n FROM notes WHERE owner_id = $1', [req.userId!], FREE_LIMITS.notes, 'notas'))) return;
+    const noteId = await insert('INSERT INTO notes (owner_id, title, content) VALUES ($1, $2, $3)', [req.userId!, title, `# ${title}\n\n`]);
+    note = await get('SELECT * FROM notes WHERE id = $1 AND owner_id = $2', [noteId, req.userId!]);
     broadcast({ type: 'notes:changed' });
   }
   res.json({ note });
 }));
 
 // ---------- Canales y mensajes (Slack) ----------
-app.get('/api/channels', requireAuth, h(async (_req, res) => {
+app.get('/api/channels', requireAuth, h(async (req: AuthedRequest, res) => {
   const channels = await all(`
     SELECT channels.*,
       (SELECT links.source_id FROM links WHERE links.target_type = 'channel' AND links.target_id = channels.id AND links.kind = 'discussion' AND links.source_type = 'card') AS card_id
-    FROM channels ORDER BY channels.name
-  `);
+    FROM channels WHERE channels.owner_id = $1 ORDER BY channels.name
+  `, [req.userId!]);
   res.json({ channels });
 }));
 
 app.post('/api/channels', requireAuth, h(async (req: AuthedRequest, res) => {
   const name = (req.body?.name ?? '').trim().toLowerCase().replace(/\s+/g, '-');
   if (!name) return res.status(400).json({ error: 'Nombre requerido' });
-  const existing = await get('SELECT * FROM channels WHERE name = $1', [name]);
+  const existing = await get('SELECT * FROM channels WHERE owner_id = $1 AND name = $2', [req.userId!, name]);
   if (existing) return res.status(409).json({ error: 'Ese canal ya existe' });
-  if (!(await withinLimit(req, res, 'SELECT COUNT(*)::int AS n FROM channels', [], FREE_LIMITS.channels, 'canales'))) return;
-  const channelId = await insert('INSERT INTO channels (name) VALUES ($1)', [name]);
+  if (!(await withinLimit(req, res, 'SELECT COUNT(*)::int AS n FROM channels WHERE owner_id = $1', [req.userId!], FREE_LIMITS.channels, 'canales'))) return;
+  const channelId = await insert('INSERT INTO channels (owner_id, name) VALUES ($1, $2)', [req.userId!, name]);
   broadcast({ type: 'channels:changed' });
-  res.json({ channel: await get('SELECT * FROM channels WHERE id = $1', [channelId]) });
+  res.json({ channel: await get('SELECT * FROM channels WHERE id = $1 AND owner_id = $2', [channelId, req.userId!]) });
 }));
 
 app.get('/api/channels/:id/messages', requireAuth, h(async (req: AuthedRequest, res) => {
@@ -1029,8 +1136,8 @@ app.get('/api/channels/:id/messages', requireAuth, h(async (req: AuthedRequest, 
   const channel = await get(`
     SELECT channels.*,
       (SELECT links.source_id FROM links WHERE links.target_type = 'channel' AND links.target_id = channels.id AND links.kind = 'discussion' AND links.source_type = 'card') AS card_id
-    FROM channels WHERE channels.id = $1
-  `, [channelId]);
+    FROM channels WHERE channels.id = $1 AND channels.owner_id = $2
+  `, [channelId, req.userId!]);
   if (!channel) return res.status(404).json({ error: 'Canal no encontrado' });
   const cardTitle = channel.card_id
     ? (await get<{ title: string }>('SELECT title FROM cards WHERE id = $1', [channel.card_id]))?.title ?? null
@@ -1061,18 +1168,21 @@ app.get('/api/channels/:id/messages', requireAuth, h(async (req: AuthedRequest, 
   res.json({ channel: { ...channel, card_title: cardTitle }, messages, reactions, pinned });
 }));
 
-app.get('/api/messages/:id/thread', requireAuth, h(async (req, res) => {
+app.get('/api/messages/:id/thread', requireAuth, h(async (req: AuthedRequest, res) => {
   const messageId = Number(req.params.id);
   const parent = await get(`
     SELECT messages.*, users.username FROM messages
-    JOIN users ON users.id = messages.user_id WHERE messages.id = $1
-  `, [messageId]);
+    JOIN users ON users.id = messages.user_id
+    JOIN channels ON channels.id = messages.channel_id
+    WHERE messages.id = $1 AND channels.owner_id = $2
+  `, [messageId, req.userId!]);
   if (!parent) return res.status(404).json({ error: 'Mensaje no encontrado' });
   const replies = await all(`
     SELECT messages.*, users.username FROM messages
     JOIN users ON users.id = messages.user_id
-    WHERE parent_id = $1 ORDER BY messages.id
-  `, [messageId]);
+    JOIN channels ON channels.id = messages.channel_id
+    WHERE parent_id = $1 AND channels.owner_id = $2 ORDER BY messages.id
+  `, [messageId, req.userId!]);
   res.json({ parent, replies });
 }));
 
@@ -1081,7 +1191,7 @@ app.post('/api/channels/:id/messages', requireAuth, h(async (req: AuthedRequest,
   const content = (req.body?.content ?? '').trim();
   const parentId = req.body?.parent_id ? Number(req.body.parent_id) : null;
   if (!content) return res.status(400).json({ error: 'Mensaje vacío' });
-  const channel = await get('SELECT id FROM channels WHERE id = $1', [channelId]);
+  const channel = await get('SELECT id FROM channels WHERE id = $1 AND owner_id = $2', [channelId, req.userId!]);
   if (!channel) return res.status(404).json({ error: 'Canal no encontrado' });
   if (parentId) {
     const parent = await get('SELECT id FROM messages WHERE id = $1 AND channel_id = $2 AND parent_id IS NULL', [parentId, channelId]);
@@ -1090,7 +1200,7 @@ app.post('/api/channels/:id/messages', requireAuth, h(async (req: AuthedRequest,
 
   const messageId = await insert('INSERT INTO messages (channel_id, user_id, content, parent_id) VALUES ($1, $2, $3, $4)',
     [channelId, req.userId!, content, parentId]);
-  await syncWikilinks('message', messageId, content, 'mention');
+  await syncWikilinks('message', messageId, content, 'mention', req.userId!);
 
   const message = await get(`
     SELECT messages.*, users.username FROM messages
@@ -1101,20 +1211,20 @@ app.post('/api/channels/:id/messages', requireAuth, h(async (req: AuthedRequest,
 }));
 
 app.patch('/api/messages/:id', requireAuth, h(async (req: AuthedRequest, res) => {
-  const message = await get('SELECT * FROM messages WHERE id = $1', [Number(req.params.id)]);
+  const message = await get('SELECT messages.* FROM messages JOIN channels ON channels.id = messages.channel_id WHERE messages.id = $1 AND channels.owner_id = $2', [Number(req.params.id), req.userId!]);
   if (!message) return res.status(404).json({ error: 'Mensaje no encontrado' });
   if (message.user_id !== req.userId) return res.status(403).json({ error: 'Solo puedes editar tus mensajes' });
   const content = (req.body?.content ?? '').trim();
   if (!content) return res.status(400).json({ error: 'Mensaje vacío' });
   await run(`UPDATE messages SET content = $1, edited_at = to_char(now() at time zone 'utc', 'YYYY-MM-DD HH24:MI:SS') WHERE id = $2`,
     [content, message.id]);
-  await syncWikilinks('message', message.id, content, 'mention');
+  await syncWikilinks('message', message.id, content, 'mention', req.userId!);
   broadcast({ type: 'chat:changed', channelId: message.channel_id });
   res.json({ ok: true });
 }));
 
 app.delete('/api/messages/:id', requireAuth, h(async (req: AuthedRequest, res) => {
-  const message = await get('SELECT * FROM messages WHERE id = $1', [Number(req.params.id)]);
+  const message = await get('SELECT messages.* FROM messages JOIN channels ON channels.id = messages.channel_id WHERE messages.id = $1 AND channels.owner_id = $2', [Number(req.params.id), req.userId!]);
   if (!message) return res.status(404).json({ error: 'Mensaje no encontrado' });
   if (message.user_id !== req.userId) return res.status(403).json({ error: 'Solo puedes eliminar tus mensajes' });
   const replyIds = (await all<{ id: number }>('SELECT id FROM messages WHERE parent_id = $1', [message.id])).map((r) => r.id);
@@ -1127,7 +1237,7 @@ app.delete('/api/messages/:id', requireAuth, h(async (req: AuthedRequest, res) =
 }));
 
 app.post('/api/messages/:id/react', requireAuth, h(async (req: AuthedRequest, res) => {
-  const message = await get<{ channel_id: number }>('SELECT channel_id FROM messages WHERE id = $1', [Number(req.params.id)]);
+  const message = await get<{ channel_id: number }>('SELECT messages.channel_id FROM messages JOIN channels ON channels.id = messages.channel_id WHERE messages.id = $1 AND channels.owner_id = $2', [Number(req.params.id), req.userId!]);
   if (!message) return res.status(404).json({ error: 'Mensaje no encontrado' });
   const emoji = (req.body?.emoji ?? '').trim();
   if (!emoji || emoji.length > 8) return res.status(400).json({ error: 'Emoji inválido' });
@@ -1145,7 +1255,7 @@ app.post('/api/messages/:id/react', requireAuth, h(async (req: AuthedRequest, re
 }));
 
 app.post('/api/messages/:id/pin', requireAuth, h(async (req, res) => {
-  const message = await get<{ channel_id: number; pinned: number }>('SELECT channel_id, pinned FROM messages WHERE id = $1', [Number(req.params.id)]);
+  const message = await get<{ channel_id: number; pinned: number }>('SELECT messages.channel_id, messages.pinned FROM messages JOIN channels ON channels.id = messages.channel_id WHERE messages.id = $1 AND channels.owner_id = $2', [Number(req.params.id), req.userId!]);
   if (!message) return res.status(404).json({ error: 'Mensaje no encontrado' });
   await run('UPDATE messages SET pinned = $1 WHERE id = $2', [message.pinned ? 0 : 1, Number(req.params.id)]);
   broadcast({ type: 'chat:changed', channelId: message.channel_id });
@@ -1158,7 +1268,7 @@ app.post('/api/channels/:id/schedule', requireAuth, requirePremium, h(async (req
   const content = (req.body?.content ?? '').trim();
   const sendAt = req.body?.send_at; // "YYYY-MM-DDTHH:mm" en hora local del servidor
   if (!content || !sendAt) return res.status(400).json({ error: 'Contenido y fecha requeridos' });
-  const channel = await get('SELECT id FROM channels WHERE id = $1', [channelId]);
+  const channel = await get('SELECT id FROM channels WHERE id = $1 AND owner_id = $2', [channelId, req.userId!]);
   if (!channel) return res.status(404).json({ error: 'Canal no encontrado' });
   const timestamp = new Date(sendAt).getTime();
   if (!Number.isFinite(timestamp) || timestamp < Date.now()) return res.status(400).json({ error: 'La fecha debe ser futura' });
@@ -1169,8 +1279,9 @@ app.post('/api/channels/:id/schedule', requireAuth, requirePremium, h(async (req
 
 app.get('/api/channels/:id/scheduled', requireAuth, h(async (req: AuthedRequest, res) => {
   const scheduled = await all(`
-    SELECT id, content, send_at FROM scheduled_messages
-    WHERE channel_id = $1 AND user_id = $2 ORDER BY send_at
+    SELECT scheduled_messages.id, scheduled_messages.content, scheduled_messages.send_at
+    FROM scheduled_messages JOIN channels ON channels.id = scheduled_messages.channel_id
+    WHERE scheduled_messages.channel_id = $1 AND scheduled_messages.user_id = $2 AND channels.owner_id = $2 ORDER BY scheduled_messages.send_at
   `, [Number(req.params.id), req.userId!]);
   res.json({ scheduled });
 }));
@@ -1190,7 +1301,7 @@ setInterval(async () => {
       if (!channel) continue;
       const messageId = await insert('INSERT INTO messages (channel_id, user_id, content) VALUES ($1, $2, $3)',
         [item.channel_id, item.user_id, item.content]);
-      await syncWikilinks('message', messageId, item.content, 'mention');
+      await syncWikilinks('message', messageId, item.content, 'mention', item.user_id);
       const message = await get(`
         SELECT messages.*, users.username FROM messages
         JOIN users ON users.id = messages.user_id WHERE messages.id = $1
@@ -1203,30 +1314,37 @@ setInterval(async () => {
 }, 15000);
 
 // ---------- Vínculos manuales ----------
-app.post('/api/links', requireAuth, h(async (req, res) => {
+app.post('/api/links', requireAuth, h(async (req: AuthedRequest, res) => {
   const { source_type, source_id, target_type, target_id } = req.body ?? {};
   const valid = ['card', 'note', 'message', 'channel'];
-  if (!valid.includes(source_type) || !valid.includes(target_type) || !source_id || !target_id) {
+  const sourceId = Number(source_id);
+  const targetId = Number(target_id);
+  if (!valid.includes(source_type) || !valid.includes(target_type) || !sourceId || !targetId ||
+      !(await ownsEntity(source_type, sourceId, req.userId!)) || !(await ownsEntity(target_type, targetId, req.userId!))) {
     return res.status(400).json({ error: 'Vínculo inválido' });
   }
   await run(`INSERT INTO links (source_type, source_id, target_type, target_id, kind)
              VALUES ($1, $2, $3, $4, 'manual') ON CONFLICT DO NOTHING`,
-    [source_type, source_id, target_type, target_id]);
+    [source_type, sourceId, target_type, targetId]);
   broadcast({ type: 'links:changed' });
   res.json({ ok: true });
 }));
 
-app.delete('/api/links/:id', requireAuth, h(async (req, res) => {
+app.delete('/api/links/:id', requireAuth, h(async (req: AuthedRequest, res) => {
+  const link = await get<{ source_type: string; source_id: number; target_type: string; target_id: number }>('SELECT * FROM links WHERE id = $1', [Number(req.params.id)]);
+  if (!link || !(await ownsEntity(link.source_type, link.source_id, req.userId!)) || !(await ownsEntity(link.target_type, link.target_id, req.userId!))) {
+    return res.status(404).json({ error: 'Vínculo no encontrado' });
+  }
   await run('DELETE FROM links WHERE id = $1', [Number(req.params.id)]);
   broadcast({ type: 'links:changed' });
   res.json({ ok: true });
 }));
 
 // ---------- Grafo de conocimiento ----------
-app.get('/api/graph', requireAuth, h(async (_req, res) => {
-  const notes = await all('SELECT id, title FROM notes');
-  const cards = await all('SELECT id, title FROM cards');
-  const channels = await all('SELECT id, name FROM channels');
+app.get('/api/graph', requireAuth, h(async (req: AuthedRequest, res) => {
+  const notes = await all('SELECT id, title FROM notes WHERE owner_id = $1', [req.userId!]);
+  const cards = await all('SELECT cards.id, cards.title FROM cards JOIN lists ON lists.id = cards.list_id JOIN boards ON boards.id = lists.board_id WHERE boards.owner_id = $1', [req.userId!]);
+  const channels = await all('SELECT id, name FROM channels WHERE owner_id = $1', [req.userId!]);
   const nodes = [
     ...notes.map((n) => ({ key: `note:${n.id}`, type: 'note', id: n.id, label: n.title })),
     ...cards.map((c) => ({ key: `card:${c.id}`, type: 'card', id: c.id, label: c.title })),
@@ -1241,7 +1359,7 @@ app.get('/api/graph', requireAuth, h(async (_req, res) => {
 }));
 
 // ---------- Búsqueda unificada ----------
-app.get('/api/search', requireAuth, h(async (req, res) => {
+app.get('/api/search', requireAuth, h(async (req: AuthedRequest, res) => {
   const q = String(req.query.q ?? '').trim();
   if (!q) return res.json({ cards: [], notes: [], messages: [], channels: [] });
   const like = `%${q}%`;
@@ -1249,15 +1367,16 @@ app.get('/api/search', requireAuth, h(async (req, res) => {
     all(`
       SELECT cards.id, cards.title, lists.board_id FROM cards
       JOIN lists ON lists.id = cards.list_id
-      WHERE cards.title ILIKE $1 OR cards.description ILIKE $1 LIMIT 10
-    `, [like]),
-    all('SELECT id, title FROM notes WHERE title ILIKE $1 OR content ILIKE $1 LIMIT 10', [like]),
+      JOIN boards ON boards.id = lists.board_id
+      WHERE boards.owner_id = $2 AND (cards.title ILIKE $1 OR cards.description ILIKE $1) LIMIT 10
+    `, [like, req.userId!]),
+    all('SELECT id, title FROM notes WHERE owner_id = $2 AND (title ILIKE $1 OR content ILIKE $1) LIMIT 10', [like, req.userId!]),
     all(`
       SELECT messages.id, substr(messages.content, 1, 120) AS content, messages.channel_id, channels.name AS channel_name, users.username
       FROM messages JOIN channels ON channels.id = messages.channel_id JOIN users ON users.id = messages.user_id
-      WHERE messages.content ILIKE $1 ORDER BY messages.id DESC LIMIT 10
-    `, [like]),
-    all('SELECT id, name FROM channels WHERE name ILIKE $1 LIMIT 10', [like]),
+      WHERE channels.owner_id = $2 AND messages.content ILIKE $1 ORDER BY messages.id DESC LIMIT 10
+    `, [like, req.userId!]),
+    all('SELECT id, name FROM channels WHERE owner_id = $2 AND name ILIKE $1 LIMIT 10', [like, req.userId!]),
   ]);
   res.json({ cards, notes, messages, channels });
 }));

@@ -26,6 +26,21 @@ export async function run(sql: string, params: unknown[] = []): Promise<number> 
   return result.rowCount ?? 0;
 }
 
+export async function transaction<T>(fn: (client: pg.PoolClient) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 // INSERT ... RETURNING id → devuelve el id generado
 export async function insert(sql: string, params: unknown[] = []): Promise<number> {
   const result = await pool.query(sql + ' RETURNING id', params);
@@ -52,11 +67,13 @@ export async function initSchema() {
     CREATE TABLE IF NOT EXISTS sessions (
       token TEXT PRIMARY KEY,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      created_at TEXT NOT NULL DEFAULT ${NOW_UTC}
+      created_at TEXT NOT NULL DEFAULT ${NOW_UTC},
+      expires_at TEXT
     );
 
     CREATE TABLE IF NOT EXISTS boards (
       id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT ${NOW_UTC}
     );
@@ -82,14 +99,16 @@ export async function initSchema() {
 
     CREATE TABLE IF NOT EXISTS notes (
       id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-      title TEXT NOT NULL UNIQUE,
+      owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
       content TEXT NOT NULL DEFAULT '',
       updated_at TEXT NOT NULL DEFAULT ${NOW_UTC}
     );
 
     CREATE TABLE IF NOT EXISTS channels (
       id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-      name TEXT NOT NULL UNIQUE,
+      owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT ${NOW_UTC}
     );
 
@@ -153,7 +172,8 @@ export async function initSchema() {
 
     CREATE TABLE IF NOT EXISTS templates (
       id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-      name TEXT NOT NULL UNIQUE,
+      owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
       content TEXT NOT NULL DEFAULT ''
     );
 
@@ -221,8 +241,26 @@ export async function initSchema() {
     ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin INTEGER NOT NULL DEFAULT 0;
     -- Registro con email: verificación y unicidad (case-insensitive)
     ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE sessions ADD COLUMN IF NOT EXISTS expires_at TEXT;
+    ALTER TABLE boards ADD COLUMN IF NOT EXISTS owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE;
+    ALTER TABLE notes ADD COLUMN IF NOT EXISTS owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE;
+    ALTER TABLE channels ADD COLUMN IF NOT EXISTS owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE;
+    ALTER TABLE templates ADD COLUMN IF NOT EXISTS owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE;
+    UPDATE boards SET owner_id = (SELECT id FROM users ORDER BY id LIMIT 1) WHERE owner_id IS NULL AND EXISTS (SELECT 1 FROM users);
+    UPDATE notes SET owner_id = (SELECT id FROM users ORDER BY id LIMIT 1) WHERE owner_id IS NULL AND EXISTS (SELECT 1 FROM users);
+    UPDATE channels SET owner_id = (SELECT id FROM users ORDER BY id LIMIT 1) WHERE owner_id IS NULL AND EXISTS (SELECT 1 FROM users);
     CREATE UNIQUE INDEX IF NOT EXISTS users_email_idx ON users (LOWER(email)) WHERE email IS NOT NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS users_google_sub_idx ON users (google_sub);
+    CREATE INDEX IF NOT EXISTS boards_owner_idx ON boards(owner_id);
+    CREATE INDEX IF NOT EXISTS notes_owner_idx ON notes(owner_id);
+    CREATE INDEX IF NOT EXISTS channels_owner_idx ON channels(owner_id);
+    ALTER TABLE notes DROP CONSTRAINT IF EXISTS notes_title_key;
+    ALTER TABLE channels DROP CONSTRAINT IF EXISTS channels_name_key;
+    ALTER TABLE templates DROP CONSTRAINT IF EXISTS templates_name_key;
+    CREATE INDEX IF NOT EXISTS templates_owner_idx ON templates(owner_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS notes_owner_title_idx ON notes(owner_id, LOWER(title));
+    CREATE UNIQUE INDEX IF NOT EXISTS channels_owner_name_idx ON channels(owner_id, name);
+    CREATE UNIQUE INDEX IF NOT EXISTS templates_owner_name_idx ON templates(owner_id, name);
   `);
 }
 

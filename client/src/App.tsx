@@ -505,7 +505,7 @@ function Workspace({ user, onLogout, onUserChanged }: {
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(!!getToken());
+  const [loading, setLoading] = useState(true);
 
   const refreshUser = useCallback(() => {
     get<{ user: User }>('/api/me')
@@ -514,7 +514,6 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!getToken()) return;
     get<{ user: User }>('/api/me')
       .then(({ user }) => setUser(user))
       .catch(() => setToken(null))

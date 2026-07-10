@@ -1,9 +1,8 @@
-let token: string | null = localStorage.getItem('quarryhq_token');
+localStorage.removeItem('quarryhq_token');
+let token: string | null = null;
 
 export function setToken(t: string | null) {
   token = t;
-  if (t) localStorage.setItem('quarryhq_token', t);
-  else localStorage.removeItem('quarryhq_token');
 }
 
 export function getToken() { return token; }
@@ -24,6 +23,7 @@ export function notifyPlanBlock(message: string) {
 
 export async function api<T = any>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(path, {
+    credentials: 'same-origin',
     ...options,
     headers: {
       'Content-Type': 'application/json',
@@ -53,11 +53,13 @@ type WsListener = (event: any) => void;
 const listeners = new Set<WsListener>();
 let socket: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let wsEnabled = false;
 
 export function connectWs() {
-  if (!token || (socket && socket.readyState <= WebSocket.OPEN)) return;
+  wsEnabled = true;
+  if (socket && socket.readyState <= WebSocket.OPEN) return;
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  socket = new WebSocket(`${proto}://${location.host}/ws?token=${token}`);
+  socket = new WebSocket(`${proto}://${location.host}/ws`);
   socket.onmessage = (e) => {
     try {
       const event = JSON.parse(e.data);
@@ -66,13 +68,18 @@ export function connectWs() {
   };
   socket.onclose = () => {
     socket = null;
-    if (token && !reconnectTimer) {
+    if (wsEnabled && !reconnectTimer) {
       reconnectTimer = setTimeout(() => { reconnectTimer = null; connectWs(); }, 2000);
     }
   };
 }
 
 export function disconnectWs() {
+  wsEnabled = false;
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
   socket?.close();
   socket = null;
 }
