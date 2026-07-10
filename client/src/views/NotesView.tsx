@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { get, post, patch, del } from '../api';
+import { get, post, patch, del, notifyPlanBlock } from '../api';
 import type { Backlink, Note, NoteMeta, NoteVersion, TagCount, Template } from '../types';
 import { renderMarkdown } from '../markdown';
 import { navigate } from '../App';
@@ -17,8 +17,9 @@ function formatVersionDate(iso: string): string {
 }
 
 // Panel lateral con el historial de versiones (estilo Obsidian Sync)
-function VersionHistory({ noteId, onRestore, onClose }: {
+function VersionHistory({ noteId, isPremium, onRestore, onClose }: {
   noteId: number;
+  isPremium: boolean;
   onRestore: () => void;
   onClose: () => void;
 }) {
@@ -38,6 +39,10 @@ function VersionHistory({ noteId, onRestore, onClose }: {
   }
 
   async function restore(versionId: number) {
+    if (!isPremium) {
+      notifyPlanBlock('Restaurar versiones anteriores es parte de Premium.');
+      return;
+    }
     if (!confirm('¿Restaurar esta versión? El estado actual se guardará en el historial.')) return;
     await post(`/api/notes/${noteId}/restore`, { version_id: versionId });
     onRestore();
@@ -51,6 +56,11 @@ function VersionHistory({ noteId, onRestore, onClose }: {
         <button className={modalClose} onClick={onClose}>✕</button>
       </div>
       <div className="flex-1 overflow-y-auto p-3">
+        {!isPremium && (
+          <p className="mb-2.5 rounded-lg border border-edge bg-raised px-3 py-2 text-[12px] text-dim">
+            El plan Free muestra las últimas 3 versiones. Con Premium ves el historial completo y puedes restaurar.
+          </p>
+        )}
         {versions.length === 0 && <p className="text-[13px] text-dim">Sin versiones anteriores. Se crean automáticamente al editar.</p>}
         {versions.map((v) => (
           <div key={v.id} className="mb-2 rounded-lg border border-edge bg-raised px-3 py-2.5 text-[13px]">
@@ -60,7 +70,9 @@ function VersionHistory({ noteId, onRestore, onClose }: {
               <button className="text-xs text-accent hover:brightness-110" onClick={() => toggle(v.id)}>
                 {expanded === v.id ? 'Ocultar' : 'Ver contenido'}
               </button>
-              <button className="text-xs text-accent hover:brightness-110" onClick={() => restore(v.id)}>↩ Restaurar</button>
+              <button className="text-xs text-accent hover:brightness-110" onClick={() => restore(v.id)}>
+                ↩ Restaurar{!isPremium && ' 🔒'}
+              </button>
             </div>
             {expanded === v.id && (
               <pre className="mt-1.5 max-h-30 overflow-auto whitespace-pre-wrap rounded-md bg-ink p-2 font-mono text-[11.5px]">{previewContent}</pre>
@@ -72,10 +84,11 @@ function VersionHistory({ noteId, onRestore, onClose }: {
   );
 }
 
-export default function NotesView({ noteId, notes, onChanged }: {
+export default function NotesView({ noteId, notes, onChanged, isPremium }: {
   noteId?: number;
   notes: NoteMeta[];
   onChanged: () => void;
+  isPremium: boolean;
 }) {
   const [detail, setDetail] = useState<NoteDetail | null>(null);
   const [title, setTitle] = useState('');
@@ -119,6 +132,10 @@ export default function NotesView({ noteId, notes, onChanged }: {
 
   async function saveAsTemplate() {
     if (!detail) return;
+    if (!isPremium) {
+      notifyPlanBlock('Crear plantillas personalizadas es parte de Premium.');
+      return;
+    }
     const name = prompt('Nombre de la plantilla:', detail.note.title);
     if (!name?.trim()) return;
     try {
@@ -249,7 +266,10 @@ export default function NotesView({ noteId, notes, onChanged }: {
               <button className={toggleBtn(mode === 'preview')} onClick={() => setMode('preview')}>Vista previa</button>
             </div>
             <button className={headerBtn} onClick={() => setShowHistory(true)} title="Historial de versiones">🕘 Historial</button>
-            <button className={headerBtn} onClick={saveAsTemplate} title="Guardar como plantilla">📄</button>
+            <button className={headerBtn} onClick={saveAsTemplate}
+              title={isPremium ? 'Guardar como plantilla' : 'Guardar como plantilla (Premium)'}>
+              📄{!isPremium && '🔒'}
+            </button>
             <button className={btnDanger} onClick={removeNote} title="Eliminar nota">🗑</button>
           </div>
 
@@ -307,7 +327,7 @@ export default function NotesView({ noteId, notes, onChanged }: {
         </div>
       )}
       {showHistory && detail && (
-        <VersionHistory noteId={detail.note.id}
+        <VersionHistory noteId={detail.note.id} isPremium={isPremium}
           onRestore={() => load(detail.note.id)}
           onClose={() => setShowHistory(false)} />
       )}

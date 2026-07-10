@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { get, post, setToken, getToken, connectWs, disconnectWs, onWsEvent } from './api';
+import { get, post, setToken, getToken, connectWs, disconnectWs, onWsEvent, isPlanError } from './api';
 import type { Board, Channel, NoteMeta, User } from './types';
 import BoardView from './views/BoardView';
 import NotesView from './views/NotesView';
 import ChatView from './views/ChatView';
 import GraphView from './views/GraphView';
 import SearchPalette from './views/SearchPalette';
+import UpgradeModal from './views/UpgradeModal';
 import { btnPrimary, btnGhost, emptyState, inputBase, sideHeading, sideIcon, sideItem, sideLabel } from './ui';
 
 function useHashRoute(): string[] {
@@ -150,12 +151,26 @@ function Login({ onAuth }: { onAuth: (user: User) => void }) {
 }
 
 // ---------- Shell autenticado ----------
-function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
+function Workspace({ user, onLogout, onUserChanged }: {
+  user: User;
+  onLogout: () => void;
+  onUserChanged: () => void;
+}) {
   const route = useHashRoute();
   const [boards, setBoards] = useState<Board[]>([]);
   const [notes, setNotes] = useState<NoteMeta[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // null = modal cerrado; '' = abierto sin mensaje; texto = abierto por un bloqueo
+  const [upgradeMsg, setUpgradeMsg] = useState<string | null>(null);
+  const isPremium = user.plan === 'premium';
+
+  // Cualquier 403 de plan (premium_required / limit_reached) abre el modal
+  useEffect(() => {
+    const onBlock = (e: Event) => setUpgradeMsg((e as CustomEvent).detail?.message ?? '');
+    window.addEventListener('obstresla:plan-block', onBlock);
+    return () => window.removeEventListener('obstresla:plan-block', onBlock);
+  }, []);
 
   const refreshSidebar = useCallback(async () => {
     const [b, n, c] = await Promise.all([
@@ -208,17 +223,25 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
   async function createBoard() {
     const name = prompt('Nombre del tablero:');
     if (!name?.trim()) return;
-    const { board } = await post<{ board: Board }>('/api/boards', { name });
-    await refreshSidebar();
-    navigate(`/board/${board.id}`);
+    try {
+      const { board } = await post<{ board: Board }>('/api/boards', { name });
+      await refreshSidebar();
+      navigate(`/board/${board.id}`);
+    } catch (err: any) {
+      if (!isPlanError(err)) alert(err.message); // los errores de plan abren el modal solos
+    }
   }
 
   async function createNote() {
     const title = prompt('Título de la nota:');
     if (!title?.trim()) return;
-    const { note } = await post<{ note: { id: number } }>('/api/notes', { title });
-    await refreshSidebar();
-    navigate(`/notes/${note.id}`);
+    try {
+      const { note } = await post<{ note: { id: number } }>('/api/notes', { title });
+      await refreshSidebar();
+      navigate(`/notes/${note.id}`);
+    } catch (err: any) {
+      if (!isPlanError(err)) alert(err.message);
+    }
   }
 
   async function createChannel() {
@@ -229,7 +252,7 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
       await refreshSidebar();
       navigate(`/chat/${channel.id}`);
     } catch (err: any) {
-      alert(err.message);
+      if (!isPlanError(err)) alert(err.message);
     }
   }
 
@@ -308,23 +331,40 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
           </button>
         </div>
 
-        <div className="mt-auto flex items-center justify-between gap-2 border-t border-edge p-3 text-[13px] text-dim">
-          <span className="flex min-w-0 items-center gap-2">
-            {user.picture && <img src={user.picture} alt="" referrerPolicy="no-referrer" className="h-5 w-5 shrink-0 rounded-full" />}
-            <span className={sideLabel} title={`@${user.username}`}>{user.name ?? `@${user.username}`}</span>
-          </span>
-          <button className={btnGhost} onClick={logout}>Salir</button>
+        <div className="mt-auto">
+          <div className="px-3 pb-1">
+            {isPremium ? (
+              <button
+                className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-3 py-1.5 text-[12px] font-semibold text-accent transition hover:bg-accent/15"
+                onClick={() => setUpgradeMsg('')}>
+                ★ Premium
+              </button>
+            ) : (
+              <button
+                className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-[12px] font-semibold text-ink transition hover:brightness-110"
+                onClick={() => setUpgradeMsg('')}>
+                ⚡ Pasar a Premium
+              </button>
+            )}
+          </div>
+          <div className="flex items-center justify-between gap-2 border-t border-edge p-3 text-[13px] text-dim">
+            <span className="flex min-w-0 items-center gap-2">
+              {user.picture && <img src={user.picture} alt="" referrerPolicy="no-referrer" className="h-5 w-5 shrink-0 rounded-full" />}
+              <span className={sideLabel} title={`@${user.username}`}>{user.name ?? `@${user.username}`}</span>
+            </span>
+            <button className={btnGhost} onClick={logout}>Salir</button>
+          </div>
         </div>
       </nav>
 
       <main className="flex flex-1 flex-col overflow-hidden">
         {section === 'board' && param && (
-          <BoardView boardId={Number(param)} initialCardId={route[2] === 'card' ? Number(route[3]) : undefined} />
+          <BoardView boardId={Number(param)} initialCardId={route[2] === 'card' ? Number(route[3]) : undefined} isPremium={isPremium} />
         )}
         {section === 'notes' && (
-          <NotesView noteId={param ? Number(param) : notes[0]?.id} notes={notes} onChanged={refreshSidebar} />
+          <NotesView noteId={param ? Number(param) : notes[0]?.id} notes={notes} onChanged={refreshSidebar} isPremium={isPremium} />
         )}
-        {section === 'chat' && param && <ChatView channelId={Number(param)} user={user} />}
+        {section === 'chat' && param && <ChatView channelId={Number(param)} user={user} isPremium={isPremium} />}
         {section === 'graph' && <GraphView />}
         {!section && (
           <div className={emptyState}>
@@ -335,6 +375,12 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
       </main>
 
       {paletteOpen && <SearchPalette onClose={() => setPaletteOpen(false)} />}
+      {upgradeMsg !== null && (
+        <UpgradeModal plan={user.plan ?? 'free'} premiumUntil={user.premium_until}
+          message={upgradeMsg || undefined}
+          onClose={() => setUpgradeMsg(null)}
+          onChanged={onUserChanged} />
+      )}
     </div>
   );
 }
@@ -342,6 +388,12 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(!!getToken());
+
+  const refreshUser = useCallback(() => {
+    get<{ user: User }>('/api/me')
+      .then(({ user }) => setUser(user))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!getToken()) return;
@@ -353,5 +405,5 @@ export default function App() {
 
   if (loading) return <div className={`${emptyState} h-screen`}>Cargando…</div>;
   if (!user) return <Login onAuth={setUser} />;
-  return <Workspace user={user} onLogout={() => setUser(null)} />;
+  return <Workspace user={user} onLogout={() => setUser(null)} onUserChanged={refreshUser} />;
 }

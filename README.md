@@ -8,6 +8,26 @@ SaaS de espacio de trabajo que combina lo mejor de tres herramientas, **todas vi
 | **Notas** | Obsidian + Sync | Markdown, `[[wiki-links]]`, backlinks, grafo, **historial de versiones con restauración**, **plantillas con variables**, **etiquetas #tag con filtrado**, **nota diaria** |
 | **Chat** | Slack Pro | Canales en tiempo real (WebSockets), **hilos de respuesta**, **reacciones emoji**, **mensajes fijados**, **edición/borrado**, **mensajes programados** |
 
+## Planes (freemium)
+
+| | **Free** | **Premium** (9 US$/mes) |
+|---|---|---|
+| Tableros | 2 (50 tarjetas c/u) | Ilimitados |
+| Notas | 20 | Ilimitadas |
+| Canales | 3 | Ilimitados |
+| Automatizaciones (Butler) | — | ✓ |
+| Vistas Tabla y Calendario | — | ✓ |
+| Historial de versiones | últimas 3, sin restaurar | 30 + restaurar |
+| Plantillas personalizadas | — | ✓ |
+| Mensajes programados | — | ✓ |
+| Grafo, búsqueda, hilos, reacciones | ✓ | ✓ |
+
+Los límites se aplican **en el servidor** (`403` con código `premium_required` o
+`limit_reached`); el cliente muestra candados 🔒 y abre el modal de upgrade al
+recibirlos. El pago es simulado: `POST /api/billing/upgrade` activa 30 días
+renovables (ahí se integraría Stripe/MercadoPago) y `POST /api/billing/cancel`
+vuelve a Free. Un premium vencido se degrada solo en el siguiente acceso.
+
 ## Funcionalidades premium
 
 - **Automatizaciones (Butler):** reglas por tablero — "cuando una tarjeta llegue a *Hecho* → marcarla completada / añadir etiqueta / fijar vencimiento". Se aplican automáticamente al mover tarjetas.

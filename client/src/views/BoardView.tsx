@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { get, post, del, onWsEvent } from '../api';
+import { get, post, del, onWsEvent, notifyPlanBlock } from '../api';
 import type { Board, Card, List } from '../types';
 import { LABEL_COLORS } from '../types';
 import CardModal from './CardModal';
@@ -76,7 +76,11 @@ function DropZone({ active, over, onDrop, onDragOver, onDragLeave }: {
   );
 }
 
-export default function BoardView({ boardId, initialCardId }: { boardId: number; initialCardId?: number }) {
+export default function BoardView({ boardId, initialCardId, isPremium }: {
+  boardId: number;
+  initialCardId?: number;
+  isPremium: boolean;
+}) {
   const [board, setBoard] = useState<Board | null>(null);
   const [lists, setLists] = useState<List[]>([]);
   const [addingCardTo, setAddingCardTo] = useState<number | null>(null);
@@ -136,10 +140,19 @@ export default function BoardView({ boardId, initialCardId }: { boardId: number;
         <span className="text-[13px] text-dim">{lists.reduce((n, l) => n + l.cards.length, 0)} tarjetas</span>
         <div className="ml-auto flex overflow-hidden rounded-lg border border-edge bg-panel">
           <button className={viewTab(view === 'kanban')} onClick={() => setView('kanban')}>▦ Tablero</button>
-          <button className={viewTab(view === 'table')} onClick={() => setView('table')}>☰ Tabla</button>
-          <button className={viewTab(view === 'calendar')} onClick={() => setView('calendar')}>📅 Calendario</button>
+          <button className={viewTab(view === 'table')}
+            onClick={() => isPremium ? setView('table') : notifyPlanBlock('Las vistas Tabla y Calendario son parte de Premium.')}>
+            ☰ Tabla{!isPremium && ' 🔒'}
+          </button>
+          <button className={viewTab(view === 'calendar')}
+            onClick={() => isPremium ? setView('calendar') : notifyPlanBlock('Las vistas Tabla y Calendario son parte de Premium.')}>
+            📅 Calendario{!isPremium && ' 🔒'}
+          </button>
         </div>
-        <button className={headerBtn} onClick={() => setShowRules(true)}>⚙ Automatización</button>
+        <button className={headerBtn}
+          onClick={() => isPremium ? setShowRules(true) : notifyPlanBlock('Las automatizaciones estilo Butler son parte de Premium.')}>
+          ⚙ Automatización{!isPremium && ' 🔒'}
+        </button>
       </div>
       <div className="flex-1 overflow-auto">
         {view === 'table' && <TableView lists={lists} onOpenCard={setOpenCardId} onChanged={load} />}

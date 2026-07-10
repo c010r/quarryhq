@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { get, post, patch, del, onWsEvent } from '../api';
+import { get, post, patch, del, onWsEvent, notifyPlanBlock } from '../api';
 import type { Channel, Message, Reaction, ScheduledMessage, User } from '../types';
 import { renderInlineMarkdown } from '../markdown';
 import { navigate } from '../App';
@@ -102,7 +102,7 @@ function MessageItem({ message, user, reactions, inThread, onReact, onOpenThread
   );
 }
 
-export default function ChatView({ channelId, user }: { channelId: number; user: User }) {
+export default function ChatView({ channelId, user, isPremium }: { channelId: number; user: User; isPremium: boolean }) {
   const [channel, setChannel] = useState<Channel | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [reactions, setReactions] = useState<Reaction[]>([]);
@@ -280,8 +280,11 @@ export default function ChatView({ channelId, user }: { channelId: number; user:
               <input value={draft} onChange={(e) => setDraft(e.target.value)}
                 placeholder={`Mensaje para #${channel.name}`} autoFocus
                 className="flex-1 bg-transparent px-2 py-1 outline-none" />
-              <button type="button" className="px-2 text-[13px] text-dim transition-colors hover:text-fg" title="Programar envío"
-                onClick={() => setShowSchedule(!showSchedule)}>⏰</button>
+              <button type="button" className="px-2 text-[13px] text-dim transition-colors hover:text-fg"
+                title={isPremium ? 'Programar envío' : 'Programar envío (Premium)'}
+                onClick={() => isPremium ? setShowSchedule(!showSchedule) : notifyPlanBlock('Los mensajes programados son parte de Premium.')}>
+                ⏰{!isPremium && '🔒'}
+              </button>
               <button className={btnSmall} type="submit">Enviar</button>
               {showSchedule && (
                 <div className="absolute bottom-full right-0 z-20 mb-2 flex w-64 flex-col gap-2 rounded-xl border border-edge bg-raised p-3 shadow-xl shadow-black/40">

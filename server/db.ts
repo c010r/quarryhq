@@ -179,6 +179,9 @@ export async function initSchema() {
     ALTER TABLE users ADD COLUMN IF NOT EXISTS name TEXT;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS picture TEXT;
     ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL;
+    -- Freemium: plan por usuario ('free' | 'premium') y vencimiento del premium
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS plan TEXT NOT NULL DEFAULT 'free';
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS premium_until TEXT;
     CREATE UNIQUE INDEX IF NOT EXISTS users_google_sub_idx ON users (google_sub);
   `);
 }

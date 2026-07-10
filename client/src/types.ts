@@ -1,4 +1,10 @@
-export interface User { id: number; username: string; name?: string | null; picture?: string | null }
+export type Plan = 'free' | 'premium';
+export interface User {
+  id: number; username: string; name?: string | null; picture?: string | null;
+  plan?: Plan; premium_until?: string | null;
+}
+export interface PlanLimits { boards: number; notes: number; channels: number; cardsPerBoard: number; noteVersions: number }
+export interface PlanUsage { boards: number; notes: number; channels: number }
 export interface Board { id: number; name: string }
 export interface List { id: number; board_id: number; name: string; position: number; cards: Card[] }
 export interface Card {

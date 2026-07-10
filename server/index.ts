@@ -61,6 +61,52 @@ const requireAuth: express.RequestHandler = (req: AuthedRequest, res, next) => {
     .catch(next);
 };
 
+// ---------- Planes (freemium) ----------
+// El plan Free tiene límites de cantidad y las funciones exclusivas se marcan
+// con requirePremium. El servidor es la fuente de verdad; el cliente solo
+// refleja el plan en la UI. El upgrade es simulado: cuando haya pasarela de
+// pago real (Stripe/MercadoPago), se integra en /api/billing/upgrade.
+const FREE_LIMITS = { boards: 2, notes: 20, channels: 3, cardsPerBoard: 50, noteVersions: 3 };
+const PREMIUM_DAYS = 30;
+
+async function userPlan(userId: number): Promise<'free' | 'premium'> {
+  const row = await get<{ plan: string; premium_until: string | null }>(
+    'SELECT plan, premium_until FROM users WHERE id = $1', [userId]);
+  if (!row || row.plan !== 'premium') return 'free';
+  // premium_until es ISO-UTC: comparar como texto es correcto. NULL = sin vencimiento.
+  if (row.premium_until && row.premium_until < new Date().toISOString()) {
+    await run(`UPDATE users SET plan = 'free', premium_until = NULL WHERE id = $1`, [userId]);
+    return 'free';
+  }
+  return 'premium';
+}
+
+const requirePremium: express.RequestHandler = (req: AuthedRequest, res, next) => {
+  userPlan(req.userId!)
+    .then((plan) => {
+      if (plan !== 'premium') {
+        return res.status(403).json({ error: 'Esta función es exclusiva del plan Premium', code: 'premium_required' });
+      }
+      next();
+    })
+    .catch(next);
+};
+
+// true = puede crear; false = ya respondió 403 por límite del plan Free
+async function withinLimit(req: AuthedRequest, res: express.Response,
+  countSql: string, params: unknown[], limit: number, what: string): Promise<boolean> {
+  if ((await userPlan(req.userId!)) === 'premium') return true;
+  const row = await get<{ n: number }>(countSql, params);
+  if ((row?.n ?? 0) >= limit) {
+    res.status(403).json({
+      error: `El plan Free permite hasta ${limit} ${what}. Pasa a Premium para seguir creando.`,
+      code: 'limit_reached',
+    });
+    return false;
+  }
+  return true;
+}
+
 app.post('/api/register', h(async (req, res) => {
   const { username, password } = req.body ?? {};
   if (!username?.trim() || !password || password.length < 4) {
@@ -71,7 +117,7 @@ app.post('/api/register', h(async (req, res) => {
   const userId = await insert('INSERT INTO users (username, password_hash) VALUES ($1, $2)', [username.trim(), hashPassword(password)]);
   const token = crypto.randomBytes(32).toString('hex');
   await run('INSERT INTO sessions (token, user_id) VALUES ($1, $2)', [token, userId]);
-  res.json({ token, user: { id: userId, username: username.trim() } });
+  res.json({ token, user: { id: userId, username: username.trim(), plan: 'free' } });
 }));
 
 app.post('/api/login', h(async (req, res) => {
@@ -83,7 +129,7 @@ app.post('/api/login', h(async (req, res) => {
   }
   const token = crypto.randomBytes(32).toString('hex');
   await run('INSERT INTO sessions (token, user_id) VALUES ($1, $2)', [token, user.id]);
-  res.json({ token, user: { id: user.id, username: user.username } });
+  res.json({ token, user: { id: user.id, username: user.username, plan: await userPlan(user.id) } });
 }));
 
 // ---------- Google Sign-In ----------
@@ -134,12 +180,39 @@ app.post('/api/auth/google', h(async (req, res) => {
 
   const token = crypto.randomBytes(32).toString('hex');
   await run('INSERT INTO sessions (token, user_id) VALUES ($1, $2)', [token, user.id]);
-  res.json({ token, user });
+  res.json({ token, user: { ...user, plan: await userPlan(user.id) } });
 }));
 
 app.get('/api/me', requireAuth, h(async (req: AuthedRequest, res) => {
-  const user = await get('SELECT id, username, name, picture FROM users WHERE id = $1', [req.userId!]);
-  res.json({ user });
+  const plan = await userPlan(req.userId!); // primero: degrada premium vencido
+  const user = await get('SELECT id, username, name, picture, plan, premium_until FROM users WHERE id = $1', [req.userId!]);
+  const [boards, notes, channels] = await Promise.all([
+    get<{ n: number }>('SELECT COUNT(*)::int AS n FROM boards'),
+    get<{ n: number }>('SELECT COUNT(*)::int AS n FROM notes'),
+    get<{ n: number }>('SELECT COUNT(*)::int AS n FROM channels'),
+  ]);
+  res.json({
+    user,
+    limits: plan === 'free' ? FREE_LIMITS : null,
+    usage: { boards: boards?.n ?? 0, notes: notes?.n ?? 0, channels: channels?.n ?? 0 },
+  });
+}));
+
+// ---------- Facturación (simulada) ----------
+app.post('/api/billing/upgrade', requireAuth, h(async (req: AuthedRequest, res) => {
+  // Aquí iría la verificación del pago real. La simulación extiende 30 días
+  // desde ahora, o desde el vencimiento si aún queda premium por delante.
+  const row = await get<{ premium_until: string | null }>('SELECT premium_until FROM users WHERE id = $1', [req.userId!]);
+  const nowIso = new Date().toISOString();
+  const from = row?.premium_until && row.premium_until > nowIso ? new Date(row.premium_until) : new Date();
+  const until = new Date(from.getTime() + PREMIUM_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  await run(`UPDATE users SET plan = 'premium', premium_until = $1 WHERE id = $2`, [until, req.userId!]);
+  res.json({ plan: 'premium', premium_until: until });
+}));
+
+app.post('/api/billing/cancel', requireAuth, h(async (req: AuthedRequest, res) => {
+  await run(`UPDATE users SET plan = 'free', premium_until = NULL WHERE id = $1`, [req.userId!]);
+  res.json({ plan: 'free', premium_until: null });
 }));
 
 app.post('/api/logout', requireAuth, h(async (req: AuthedRequest, res) => {
@@ -169,9 +242,10 @@ app.get('/api/boards', requireAuth, h(async (_req, res) => {
   res.json({ boards: await all('SELECT * FROM boards ORDER BY id') });
 }));
 
-app.post('/api/boards', requireAuth, h(async (req, res) => {
+app.post('/api/boards', requireAuth, h(async (req: AuthedRequest, res) => {
   const name = (req.body?.name ?? '').trim();
   if (!name) return res.status(400).json({ error: 'Nombre requerido' });
+  if (!(await withinLimit(req, res, 'SELECT COUNT(*)::int AS n FROM boards', [], FREE_LIMITS.boards, 'tableros'))) return;
   const boardId = await insert('INSERT INTO boards (name) VALUES ($1)', [name]);
   broadcast({ type: 'boards:changed' });
   res.json({ board: await get('SELECT * FROM boards WHERE id = $1', [boardId]) });
@@ -227,11 +301,14 @@ app.delete('/api/lists/:id', requireAuth, h(async (req, res) => {
   res.json({ ok: true });
 }));
 
-app.post('/api/cards', requireAuth, h(async (req, res) => {
+app.post('/api/cards', requireAuth, h(async (req: AuthedRequest, res) => {
   const { list_id, title } = req.body ?? {};
   if (!list_id || !title?.trim()) return res.status(400).json({ error: 'Datos incompletos' });
   const list = await get<{ board_id: number }>('SELECT board_id FROM lists WHERE id = $1', [list_id]);
   if (!list) return res.status(404).json({ error: 'Lista no encontrada' });
+  if (!(await withinLimit(req, res,
+    'SELECT COUNT(*)::int AS n FROM cards JOIN lists ON lists.id = cards.list_id WHERE lists.board_id = $1',
+    [list.board_id], FREE_LIMITS.cardsPerBoard, 'tarjetas por tablero'))) return;
   const max = await get<{ p: number }>('SELECT COALESCE(MAX(position), -1) AS p FROM cards WHERE list_id = $1', [list_id]);
   const cardId = await insert('INSERT INTO cards (list_id, title, position) VALUES ($1, $2, $3)', [list_id, title.trim(), (max?.p ?? -1) + 1]);
   broadcast({ type: 'board:changed', boardId: list.board_id });
@@ -356,7 +433,7 @@ app.get('/api/boards/:id/rules', requireAuth, h(async (req, res) => {
   res.json({ rules });
 }));
 
-app.post('/api/boards/:id/rules', requireAuth, h(async (req, res) => {
+app.post('/api/boards/:id/rules', requireAuth, requirePremium, h(async (req, res) => {
   const boardId = Number(req.params.id);
   const { list_id, action, param } = req.body ?? {};
   const validActions = ['complete', 'uncomplete', 'label', 'due_today', 'clear_due'];
@@ -440,6 +517,7 @@ app.post('/api/cards/:id/discussion', requireAuth, h(async (req, res) => {
     WHERE links.source_type = 'card' AND links.source_id = $1 AND links.target_type = 'channel' AND links.kind = 'discussion'
   `, [cardId]);
   if (existing) return res.json({ channel: existing });
+  if (!(await withinLimit(req as AuthedRequest, res, 'SELECT COUNT(*)::int AS n FROM channels', [], FREE_LIMITS.channels, 'canales'))) return;
 
   const slugBase = 'tarjeta-' + card.title.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
   let slug = slugBase || `tarjeta-${cardId}`;
@@ -484,11 +562,12 @@ function fillTemplate(content: string, title: string): string {
     .replaceAll('{{fecha}}', new Date().toISOString().slice(0, 10));
 }
 
-app.post('/api/notes', requireAuth, h(async (req, res) => {
+app.post('/api/notes', requireAuth, h(async (req: AuthedRequest, res) => {
   const title = (req.body?.title ?? '').trim();
   if (!title) return res.status(400).json({ error: 'Título requerido' });
   const existing = await get('SELECT * FROM notes WHERE LOWER(title) = LOWER($1)', [title]);
   if (existing) return res.json({ note: existing, existed: true });
+  if (!(await withinLimit(req, res, 'SELECT COUNT(*)::int AS n FROM notes', [], FREE_LIMITS.notes, 'notas'))) return;
   let content = `# ${title}\n\n`;
   if (req.body?.template_id) {
     const template = await get<{ content: string }>('SELECT content FROM templates WHERE id = $1', [Number(req.body.template_id)]);
@@ -506,7 +585,7 @@ app.get('/api/templates', requireAuth, h(async (_req, res) => {
   res.json({ templates: await all('SELECT * FROM templates ORDER BY name') });
 }));
 
-app.post('/api/templates', requireAuth, h(async (req, res) => {
+app.post('/api/templates', requireAuth, requirePremium, h(async (req, res) => {
   const name = (req.body?.name ?? '').trim();
   const content = req.body?.content ?? '';
   if (!name) return res.status(400).json({ error: 'Nombre requerido' });
@@ -516,7 +595,7 @@ app.post('/api/templates', requireAuth, h(async (req, res) => {
   res.json({ ok: true });
 }));
 
-app.delete('/api/templates/:id', requireAuth, h(async (req, res) => {
+app.delete('/api/templates/:id', requireAuth, requirePremium, h(async (req, res) => {
   await run('DELETE FROM templates WHERE id = $1', [Number(req.params.id)]);
   res.json({ ok: true });
 }));
@@ -578,10 +657,13 @@ app.patch('/api/notes/:id', requireAuth, h(async (req, res) => {
   res.json({ note: await get('SELECT * FROM notes WHERE id = $1', [note.id]) });
 }));
 
-app.get('/api/notes/:id/versions', requireAuth, h(async (req, res) => {
+app.get('/api/notes/:id/versions', requireAuth, h(async (req: AuthedRequest, res) => {
+  // Free ve solo las últimas versiones; el historial completo es Premium
+  const plan = await userPlan(req.userId!);
   const versions = await all(`
     SELECT id, title, created_at, length(content) AS size
     FROM note_versions WHERE note_id = $1 ORDER BY id DESC
+    ${plan === 'free' ? `LIMIT ${FREE_LIMITS.noteVersions}` : ''}
   `, [Number(req.params.id)]);
   res.json({ versions });
 }));
@@ -592,7 +674,7 @@ app.get('/api/versions/:id', requireAuth, h(async (req, res) => {
   res.json({ version });
 }));
 
-app.post('/api/notes/:id/restore', requireAuth, h(async (req, res) => {
+app.post('/api/notes/:id/restore', requireAuth, requirePremium, h(async (req, res) => {
   const noteId = Number(req.params.id);
   const note = await get('SELECT * FROM notes WHERE id = $1', [noteId]);
   const version = await get('SELECT * FROM note_versions WHERE id = $1 AND note_id = $2', [Number(req.body?.version_id), noteId]);
@@ -621,6 +703,7 @@ app.post('/api/notes/resolve', requireAuth, h(async (req, res) => {
   if (!title) return res.status(400).json({ error: 'Título requerido' });
   let note = await get('SELECT * FROM notes WHERE LOWER(title) = LOWER($1)', [title]);
   if (!note) {
+    if (!(await withinLimit(req as AuthedRequest, res, 'SELECT COUNT(*)::int AS n FROM notes', [], FREE_LIMITS.notes, 'notas'))) return;
     const noteId = await insert('INSERT INTO notes (title, content) VALUES ($1, $2)', [title, `# ${title}\n\n`]);
     note = await get('SELECT * FROM notes WHERE id = $1', [noteId]);
     broadcast({ type: 'notes:changed' });
@@ -638,11 +721,12 @@ app.get('/api/channels', requireAuth, h(async (_req, res) => {
   res.json({ channels });
 }));
 
-app.post('/api/channels', requireAuth, h(async (req, res) => {
+app.post('/api/channels', requireAuth, h(async (req: AuthedRequest, res) => {
   const name = (req.body?.name ?? '').trim().toLowerCase().replace(/\s+/g, '-');
   if (!name) return res.status(400).json({ error: 'Nombre requerido' });
   const existing = await get('SELECT * FROM channels WHERE name = $1', [name]);
   if (existing) return res.status(409).json({ error: 'Ese canal ya existe' });
+  if (!(await withinLimit(req, res, 'SELECT COUNT(*)::int AS n FROM channels', [], FREE_LIMITS.channels, 'canales'))) return;
   const channelId = await insert('INSERT INTO channels (name) VALUES ($1)', [name]);
   broadcast({ type: 'channels:changed' });
   res.json({ channel: await get('SELECT * FROM channels WHERE id = $1', [channelId]) });
@@ -777,7 +861,7 @@ app.post('/api/messages/:id/pin', requireAuth, h(async (req, res) => {
 }));
 
 // ---------- Mensajes programados ----------
-app.post('/api/channels/:id/schedule', requireAuth, h(async (req: AuthedRequest, res) => {
+app.post('/api/channels/:id/schedule', requireAuth, requirePremium, h(async (req: AuthedRequest, res) => {
   const channelId = Number(req.params.id);
   const content = (req.body?.content ?? '').trim();
   const sendAt = req.body?.send_at; // "YYYY-MM-DDTHH:mm" en hora local del servidor

@@ -8,6 +8,20 @@ export function setToken(t: string | null) {
 
 export function getToken() { return token; }
 
+export class ApiError extends Error {
+  code?: string;
+}
+
+// El servidor responde 403 con estos códigos cuando el plan Free bloquea la
+// acción; cualquier parte de la UI puede escuchar el evento y ofrecer upgrade.
+export function isPlanError(err: unknown): boolean {
+  return err instanceof ApiError && (err.code === 'premium_required' || err.code === 'limit_reached');
+}
+
+export function notifyPlanBlock(message: string) {
+  window.dispatchEvent(new CustomEvent('obstresla:plan-block', { detail: { message } }));
+}
+
 export async function api<T = any>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(path, {
     ...options,
@@ -18,7 +32,12 @@ export async function api<T = any>(path: string, options: RequestInit = {}): Pro
     },
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error ?? `Error ${res.status}`);
+  if (!res.ok) {
+    const err = new ApiError(data.error ?? `Error ${res.status}`);
+    err.code = data.code;
+    if (isPlanError(err)) notifyPlanBlock(err.message);
+    throw err;
+  }
   return data as T;
 }
 
