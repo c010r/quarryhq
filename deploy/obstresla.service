@@ -3,7 +3,7 @@
 # Logs:     journalctl -u obstresla -f
 
 [Unit]
-Description=Obstresla (tableros + notas + chat)
+Description=QuarryHQ (tableros + notas + chat)
 After=network.target postgresql.service
 Wants=postgresql.service
 

@@ -1,9 +1,9 @@
-let token: string | null = localStorage.getItem('obstresla_token');
+let token: string | null = localStorage.getItem('quarryhq_token');
 
 export function setToken(t: string | null) {
   token = t;
-  if (t) localStorage.setItem('obstresla_token', t);
-  else localStorage.removeItem('obstresla_token');
+  if (t) localStorage.setItem('quarryhq_token', t);
+  else localStorage.removeItem('quarryhq_token');
 }
 
 export function getToken() { return token; }
@@ -19,7 +19,7 @@ export function isPlanError(err: unknown): boolean {
 }
 
 export function notifyPlanBlock(message: string) {
-  window.dispatchEvent(new CustomEvent('obstresla:plan-block', { detail: { message } }));
+  window.dispatchEvent(new CustomEvent('quarryhq:plan-block', { detail: { message } }));
 }
 
 export async function api<T = any>(path: string, options: RequestInit = {}): Promise<T> {

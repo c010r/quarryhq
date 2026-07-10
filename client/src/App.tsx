@@ -153,7 +153,7 @@ function Login({ onAuth }: { onAuth: (user: User) => void }) {
     <div className="flex h-full items-center justify-center bg-ink [background-image:radial-gradient(ellipse_at_top,#1a1f3a_0%,var(--color-ink)_62%)]">
       <form onSubmit={submit} className="flex w-[380px] flex-col gap-3.5 rounded-2xl border border-edge bg-panel p-9 shadow-2xl shadow-black/50">
         <LinkMark />
-        <h1 className="font-display text-[28px] font-extrabold tracking-tight">Obstresla</h1>
+        <h1 className="font-display text-[28px] font-extrabold tracking-tight">QuarryHQ</h1>
         <p className="mb-1 text-[13px] leading-relaxed text-dim">
           <span className="font-semibold text-board">Tableros</span>,{' '}
           <span className="font-semibold text-note">notas</span> y{' '}
@@ -255,8 +255,8 @@ function Workspace({ user, onLogout, onUserChanged }: {
   // Cualquier 403 de plan (premium_required / limit_reached) abre el modal
   useEffect(() => {
     const onBlock = (e: Event) => setUpgradeMsg((e as CustomEvent).detail?.message ?? '');
-    window.addEventListener('obstresla:plan-block', onBlock);
-    return () => window.removeEventListener('obstresla:plan-block', onBlock);
+    window.addEventListener('quarryhq:plan-block', onBlock);
+    return () => window.removeEventListener('quarryhq:plan-block', onBlock);
   }, []);
 
   const refreshSidebar = useCallback(async () => {
@@ -367,7 +367,7 @@ function Workspace({ user, onLogout, onUserChanged }: {
             <circle cx="12" cy="6" r="3.4" fill="var(--color-note)" />
             <circle cx="19" cy="17" r="3.4" fill="var(--color-chat)" />
           </svg>
-          Obstresla
+          QuarryHQ
         </div>
         <button
           onClick={() => setPaletteOpen(true)}
@@ -455,7 +455,7 @@ function Workspace({ user, onLogout, onUserChanged }: {
         {section === 'graph' && <GraphView />}
         {!section && (
           <div className={emptyState}>
-            <h3 className="font-display text-base font-bold text-fg">Bienvenido a Obstresla</h3>
+            <h3 className="font-display text-base font-bold text-fg">Bienvenido a QuarryHQ</h3>
             <p>Crea un tablero, una nota o un canal desde la barra lateral.</p>
           </div>
         )}

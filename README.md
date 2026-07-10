@@ -1,4 +1,4 @@
-# ⚡ Obstresla
+# ⚡ QuarryHQ
 
 SaaS de espacio de trabajo que combina lo mejor de tres herramientas, **todas vinculadas entre sí**:
 
@@ -34,7 +34,7 @@ en el siguiente acceso. El titular del plan Equipos invita miembros por username
 ### Códigos de invitación
 
 Los administradores (`users.is_admin = 1`, se asigna por SQL) generan códigos
-`OBST-XXXX-XXXX` desde el modal de planes, con días de prueba y usos configurables.
+`QHQ-XXXX-XXXX` desde el modal de planes, con días de prueba y usos configurables.
 Un colega los canjea al registrarse (campo opcional) o desde el modal
 (`POST /api/invites/redeem`) y recibe esos días de Premium. Cada usuario puede
 canjear un solo código.
@@ -103,7 +103,7 @@ npm start          # Express sirve API + estáticos en :3001 (o $PORT)
 
 También hay `Dockerfile` (multi-stage, expone :3001) para plataformas de contenedores.
 
-### Despliegue en VPS (obstresla.pro)
+### Despliegue en VPS (quarryhq.pro)
 
 Plantillas listas en [`deploy/`](deploy/): bloque de nginx con proxy WebSocket,
 unidad systemd y script de backup diario. Resumen en un VPS Ubuntu/Debian:
@@ -123,10 +123,10 @@ sudo -u obstresla nano /opt/obstresla/.env   # DATABASE_URL=… GOOGLE_CLIENT_ID
 # 3. Servicio + nginx + HTTPS
 sudo cp deploy/obstresla.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now obstresla
-sudo cp deploy/nginx-obstresla.conf /etc/nginx/sites-available/obstresla
+sudo cp deploy/nginx-quarryhq.conf /etc/nginx/sites-available/obstresla
 sudo ln -s /etc/nginx/sites-available/obstresla /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
-sudo certbot --nginx -d obstresla.pro
+sudo certbot --nginx -d quarryhq.pro
 
 # 4. Firewall + backups
 sudo ufw allow OpenSSH && sudo ufw allow 'Nginx Full' && sudo ufw enable
@@ -134,8 +134,8 @@ sudo cp deploy/backup-db.sh /usr/local/bin/obstresla-backup && sudo chmod +x /us
 echo '15 4 * * * root /usr/local/bin/obstresla-backup' | sudo tee /etc/cron.d/obstresla-backup
 ```
 
-Requisitos externos: registro DNS `A` de `obstresla.pro` → IP del VPS,
-y añadir `https://obstresla.pro` a los orígenes autorizados del OAuth
+Requisitos externos: registro DNS `A` de `quarryhq.pro` → IP del VPS,
+y añadir `https://quarryhq.pro` a los orígenes autorizados del OAuth
 client en Google Cloud.
 
 Actualizar: `cd /opt/obstresla && sudo -u obstresla git pull && sudo -u obstresla npm ci && sudo -u obstresla npm run build && sudo systemctl restart obstresla`

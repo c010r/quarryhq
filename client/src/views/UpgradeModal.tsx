@@ -233,7 +233,7 @@ export default function UpgradeModal({ plan, message, onClose, onChanged }: {
           <form className="flex items-center gap-2 rounded-xl border border-dashed border-edge px-4 py-3"
             onSubmit={(e) => { e.preventDefault(); redeem(); }}>
             <span className="text-[13px] text-dim">🎟 ¿Tienes un código de invitación?</span>
-            <input className={`${inputBase} flex-1 py-1.5 font-mono text-[13px] uppercase`} placeholder="OBST-XXXX-XXXX"
+            <input className={`${inputBase} flex-1 py-1.5 font-mono text-[13px] uppercase`} placeholder="QHQ-XXXX-XXXX"
               value={redeemCode} onChange={(e) => setRedeemCode(e.target.value.toUpperCase())} />
             <button className={btnSmall} disabled={busy || !redeemCode.trim()}>Canjear</button>
           </form>

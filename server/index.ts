@@ -173,7 +173,7 @@ function generateInviteCode(): string {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // sin 0/O ni 1/I
   let s = '';
   for (let i = 0; i < 8; i++) s += alphabet[crypto.randomInt(alphabet.length)];
-  return `OBST-${s.slice(0, 4)}-${s.slice(4)}`;
+  return `QHQ-${s.slice(0, 4)}-${s.slice(4)}`;
 }
 
 async function redeemInvite(userId: number, rawCode: string): Promise<{ ok: true; days: number } | { ok: false; error: string }> {
@@ -249,7 +249,7 @@ app.post('/api/register', h(async (req, res) => {
   }
 
   const verifyToken = await createAuthToken(userId, 'verify', 7 * 24 * 60 * 60 * 1000);
-  sendMail(email, 'Confirma tu correo en Obstresla', verifyEmailHtml(verifyToken))
+  sendMail(email, 'Confirma tu correo en QuarryHQ', verifyEmailHtml(verifyToken))
     .catch((err) => console.error('Error enviando verificación:', err));
 
   const token = crypto.randomBytes(32).toString('hex');
@@ -291,7 +291,7 @@ app.post('/api/auth/forgot', h(async (req, res) => {
   const user = await get<{ id: number }>('SELECT id FROM users WHERE LOWER(email) = $1 AND password_hash IS NOT NULL', [email]);
   if (user) {
     const token = await createAuthToken(user.id, 'reset', 60 * 60 * 1000);
-    sendMail(email, 'Restablece tu contraseña de Obstresla', resetPasswordHtml(token))
+    sendMail(email, 'Restablece tu contraseña de QuarryHQ', resetPasswordHtml(token))
       .catch((err) => console.error('Error enviando reseteo:', err));
   }
   res.json({ ok: true });
@@ -1264,7 +1264,7 @@ const PORT = Number(platformPort ?? process.env.API_PORT) || 3001;
 async function main() {
   await initSchema();
   await seedIfEmpty();
-  server.listen(PORT, () => console.log(`Obstresla API (PostgreSQL) escuchando en http://localhost:${PORT}`));
+  server.listen(PORT, () => console.log(`QuarryHQ API (PostgreSQL) escuchando en http://localhost:${PORT}`));
 }
 
 main().catch((err) => {
