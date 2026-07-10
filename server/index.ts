@@ -886,6 +886,13 @@ app.get('/api/search', requireAuth, h(async (req, res) => {
   res.json({ cards, notes, messages, channels });
 }));
 
+// Health check para balanceadores y monitoreo; confirma que la base responde.
+// Debe registrarse antes del catch-all de estáticos.
+app.get('/api/health', h(async (_req, res) => {
+  await get('SELECT 1');
+  res.json({ ok: true });
+}));
+
 // ---------- Estáticos en producción ----------
 if (process.env.NODE_ENV === 'production') {
   const dist = path.join(process.cwd(), 'client', 'dist');
@@ -898,12 +905,6 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
   console.error('Error no controlado:', err);
   if (!res.headersSent) res.status(500).json({ error: 'Error interno del servidor' });
 });
-
-// Health check para balanceadores (ALB/Cloud Run); confirma que la base responde
-app.get('/api/health', h(async (_req, res) => {
-  await get('SELECT 1');
-  res.json({ ok: true });
-}));
 
 // PORT lo inyectan las plataformas de contenedores (solo cuenta en producción:
 // en dev PORT es el puerto de Vite); API_PORT es el override local de la API
