@@ -10,23 +10,26 @@ SaaS de espacio de trabajo que combina lo mejor de tres herramientas, **todas vi
 
 ## Planes (freemium)
 
-| | **Free** | **Premium** (9 US$/mes) |
-|---|---|---|
-| Tableros | 2 (50 tarjetas c/u) | Ilimitados |
-| Notas | 20 | Ilimitadas |
-| Canales | 3 | Ilimitados |
-| Automatizaciones (Butler) | — | ✓ |
-| Vistas Tabla y Calendario | — | ✓ |
-| Historial de versiones | últimas 3, sin restaurar | 30 + restaurar |
-| Plantillas personalizadas | — | ✓ |
-| Mensajes programados | — | ✓ |
-| Grafo, búsqueda, hilos, reacciones | ✓ | ✓ |
+| | **Free** | **Individual** (9,99 US$/mes) | **Equipos** (19,99 US$/mes) |
+|---|---|---|---|
+| Cuentas con Premium | — | 1 | 5 (titular + 4 miembros) |
+| Tableros | 2 (50 tarjetas c/u) | Ilimitados | Ilimitados |
+| Notas | 20 | Ilimitadas | Ilimitadas |
+| Canales | 3 | Ilimitados | Ilimitados |
+| Automatizaciones (Butler) | — | ✓ | ✓ |
+| Vistas Tabla y Calendario | — | ✓ | ✓ |
+| Historial de versiones | últimas 3, sin restaurar | 30 + restaurar | 30 + restaurar |
+| Plantillas personalizadas | — | ✓ | ✓ |
+| Mensajes programados | — | ✓ | ✓ |
+| Grafo, búsqueda, hilos, reacciones | ✓ | ✓ | ✓ |
 
 Los límites se aplican **en el servidor** (`403` con código `premium_required` o
 `limit_reached`); el cliente muestra candados 🔒 y abre el modal de upgrade al
-recibirlos. El pago es simulado: `POST /api/billing/upgrade` activa 30 días
-renovables (ahí se integraría Stripe/MercadoPago) y `POST /api/billing/cancel`
-vuelve a Free. Un premium vencido se degrada solo en el siguiente acceso.
+recibirlos. El pago es simulado: `POST /api/billing/upgrade` (`{plan: 'premium'|'team'}`)
+activa 30 días renovables (ahí se integraría Stripe/MercadoPago) y
+`POST /api/billing/cancel` vuelve a Free. Una suscripción vencida se degrada sola
+en el siguiente acceso. El titular del plan Equipos invita miembros por username
+(`POST /api/team/members`) y estos reciben Premium mientras el equipo esté activo.
 
 ## Funcionalidades premium
 

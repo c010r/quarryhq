@@ -164,6 +164,13 @@ export async function initSchema() {
       PRIMARY KEY (message_id, user_id, emoji)
     );
 
+    -- Plan Equipos: el titular (users.plan = 'team') da Premium a sus miembros
+    CREATE TABLE IF NOT EXISTS team_seats (
+      owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      PRIMARY KEY (owner_id, user_id)
+    );
+
     CREATE TABLE IF NOT EXISTS scheduled_messages (
       id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
       channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,

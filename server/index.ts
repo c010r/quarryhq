@@ -68,17 +68,30 @@ const requireAuth: express.RequestHandler = (req: AuthedRequest, res, next) => {
 // pago real (Stripe/MercadoPago), se integra en /api/billing/upgrade.
 const FREE_LIMITS = { boards: 2, notes: 20, channels: 3, cardsPerBoard: 50, noteVersions: 3 };
 const PREMIUM_DAYS = 30;
+const TEAM_EXTRA_SEATS = 4; // el plan Equipos cubre 5 cuentas: titular + 4 miembros
 
+// Plan efectivo del usuario: premium propio (individual o Equipos, no vencido)
+// o un asiento en el equipo activo de otro usuario.
 async function userPlan(userId: number): Promise<'free' | 'premium'> {
+  const nowIso = new Date().toISOString(); // premium_until es ISO-UTC: comparar como texto es correcto
   const row = await get<{ plan: string; premium_until: string | null }>(
     'SELECT plan, premium_until FROM users WHERE id = $1', [userId]);
-  if (!row || row.plan !== 'premium') return 'free';
-  // premium_until es ISO-UTC: comparar como texto es correcto. NULL = sin vencimiento.
-  if (row.premium_until && row.premium_until < new Date().toISOString()) {
-    await run(`UPDATE users SET plan = 'free', premium_until = NULL WHERE id = $1`, [userId]);
-    return 'free';
+  if (!row) return 'free';
+  if (row.plan === 'premium' || row.plan === 'team') {
+    if (row.premium_until && row.premium_until < nowIso) {
+      await run(`UPDATE users SET plan = 'free', premium_until = NULL WHERE id = $1`, [userId]);
+    } else {
+      return 'premium';
+    }
   }
-  return 'premium';
+  const seat = await get(`
+    SELECT 1 FROM team_seats
+    JOIN users owner ON owner.id = team_seats.owner_id
+    WHERE team_seats.user_id = $1 AND owner.plan = 'team'
+      AND (owner.premium_until IS NULL OR owner.premium_until >= $2)
+    LIMIT 1
+  `, [userId, nowIso]);
+  return seat ? 'premium' : 'free';
 }
 
 const requirePremium: express.RequestHandler = (req: AuthedRequest, res, next) => {
@@ -184,15 +197,39 @@ app.post('/api/auth/google', h(async (req, res) => {
 }));
 
 app.get('/api/me', requireAuth, h(async (req: AuthedRequest, res) => {
-  const plan = await userPlan(req.userId!); // primero: degrada premium vencido
-  const user = await get('SELECT id, username, name, picture, plan, premium_until FROM users WHERE id = $1', [req.userId!]);
+  const plan = await userPlan(req.userId!); // primero: degrada suscripciones vencidas
+  const row = await get('SELECT id, username, name, picture, plan, premium_until FROM users WHERE id = $1', [req.userId!]);
+
+  // Información de equipo: titular ve sus miembros; un miembro ve a su titular
+  let team: unknown = null;
+  if (row.plan === 'team') {
+    const members = await all(`
+      SELECT users.id, users.username FROM team_seats
+      JOIN users ON users.id = team_seats.user_id
+      WHERE team_seats.owner_id = $1 ORDER BY users.username
+    `, [req.userId!]);
+    team = { role: 'owner', members, max_members: TEAM_EXTRA_SEATS };
+  } else {
+    const seat = await get<{ username: string }>(`
+      SELECT owner.username FROM team_seats
+      JOIN users owner ON owner.id = team_seats.owner_id
+      WHERE team_seats.user_id = $1 AND owner.plan = 'team'
+        AND (owner.premium_until IS NULL OR owner.premium_until >= $2)
+      LIMIT 1
+    `, [req.userId!, new Date().toISOString()]);
+    if (seat) team = { role: 'member', owner: seat.username };
+  }
+
   const [boards, notes, channels] = await Promise.all([
     get<{ n: number }>('SELECT COUNT(*)::int AS n FROM boards'),
     get<{ n: number }>('SELECT COUNT(*)::int AS n FROM notes'),
     get<{ n: number }>('SELECT COUNT(*)::int AS n FROM channels'),
   ]);
   res.json({
-    user,
+    // user.plan es el plan EFECTIVO (lo que desbloquea la UI); subscription es
+    // lo contratado por este usuario ('none' | 'premium' | 'team')
+    user: { ...row, plan, subscription: row.plan === 'free' ? 'none' : row.plan },
+    team,
     limits: plan === 'free' ? FREE_LIMITS : null,
     usage: { boards: boards?.n ?? 0, notes: notes?.n ?? 0, channels: channels?.n ?? 0 },
   });
@@ -200,19 +237,46 @@ app.get('/api/me', requireAuth, h(async (req: AuthedRequest, res) => {
 
 // ---------- Facturación (simulada) ----------
 app.post('/api/billing/upgrade', requireAuth, h(async (req: AuthedRequest, res) => {
-  // Aquí iría la verificación del pago real. La simulación extiende 30 días
-  // desde ahora, o desde el vencimiento si aún queda premium por delante.
+  // Aquí iría la verificación del pago real (Stripe/MercadoPago). La simulación
+  // extiende 30 días desde ahora, o desde el vencimiento si aún queda saldo.
+  const tier = req.body?.plan === 'team' ? 'team' : 'premium';
   const row = await get<{ premium_until: string | null }>('SELECT premium_until FROM users WHERE id = $1', [req.userId!]);
   const nowIso = new Date().toISOString();
   const from = row?.premium_until && row.premium_until > nowIso ? new Date(row.premium_until) : new Date();
   const until = new Date(from.getTime() + PREMIUM_DAYS * 24 * 60 * 60 * 1000).toISOString();
-  await run(`UPDATE users SET plan = 'premium', premium_until = $1 WHERE id = $2`, [until, req.userId!]);
-  res.json({ plan: 'premium', premium_until: until });
+  await run(`UPDATE users SET plan = $1, premium_until = $2 WHERE id = $3`, [tier, until, req.userId!]);
+  res.json({ plan: tier, premium_until: until });
 }));
 
 app.post('/api/billing/cancel', requireAuth, h(async (req: AuthedRequest, res) => {
   await run(`UPDATE users SET plan = 'free', premium_until = NULL WHERE id = $1`, [req.userId!]);
   res.json({ plan: 'free', premium_until: null });
+}));
+
+// ---------- Equipo (plan Equipos: titular + 4 miembros) ----------
+app.post('/api/team/members', requireAuth, h(async (req: AuthedRequest, res) => {
+  const me = await get<{ plan: string; premium_until: string | null }>(
+    'SELECT plan, premium_until FROM users WHERE id = $1', [req.userId!]);
+  const nowIso = new Date().toISOString();
+  if (!me || me.plan !== 'team' || (me.premium_until && me.premium_until < nowIso)) {
+    return res.status(403).json({ error: 'Necesitas el plan Equipos activo para invitar miembros', code: 'premium_required' });
+  }
+  const username = (req.body?.username ?? '').trim();
+  if (!username) return res.status(400).json({ error: 'Usuario requerido' });
+  const target = await get<{ id: number }>('SELECT id FROM users WHERE username = $1', [username]);
+  if (!target) return res.status(404).json({ error: `No existe el usuario "${username}"` });
+  if (target.id === req.userId) return res.status(400).json({ error: 'Tú ya eres el titular del equipo' });
+  const seats = await get<{ n: number }>('SELECT COUNT(*)::int AS n FROM team_seats WHERE owner_id = $1', [req.userId!]);
+  if ((seats?.n ?? 0) >= TEAM_EXTRA_SEATS) {
+    return res.status(400).json({ error: `El plan Equipos cubre ${TEAM_EXTRA_SEATS + 1} cuentas: tú y ${TEAM_EXTRA_SEATS} miembros` });
+  }
+  await run('INSERT INTO team_seats (owner_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [req.userId!, target.id]);
+  res.json({ ok: true });
+}));
+
+app.delete('/api/team/members/:userId', requireAuth, h(async (req: AuthedRequest, res) => {
+  await run('DELETE FROM team_seats WHERE owner_id = $1 AND user_id = $2', [req.userId!, Number(req.params.userId)]);
+  res.json({ ok: true });
 }));
 
 app.post('/api/logout', requireAuth, h(async (req: AuthedRequest, res) => {

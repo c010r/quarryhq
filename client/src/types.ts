@@ -1,10 +1,17 @@
 export type Plan = 'free' | 'premium';
+export type Subscription = 'none' | 'premium' | 'team';
 export interface User {
   id: number; username: string; name?: string | null; picture?: string | null;
-  plan?: Plan; premium_until?: string | null;
+  plan?: Plan;                    // plan efectivo (incluye premium por asiento de equipo)
+  subscription?: Subscription;    // lo contratado por este usuario
+  premium_until?: string | null;
 }
 export interface PlanLimits { boards: number; notes: number; channels: number; cardsPerBoard: number; noteVersions: number }
 export interface PlanUsage { boards: number; notes: number; channels: number }
+export type TeamInfo =
+  | { role: 'owner'; members: { id: number; username: string }[]; max_members: number }
+  | { role: 'member'; owner: string }
+  | null;
 export interface Board { id: number; name: string }
 export interface List { id: number; board_id: number; name: string; position: number; cards: Card[] }
 export interface Card {

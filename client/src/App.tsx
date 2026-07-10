@@ -376,7 +376,7 @@ function Workspace({ user, onLogout, onUserChanged }: {
 
       {paletteOpen && <SearchPalette onClose={() => setPaletteOpen(false)} />}
       {upgradeMsg !== null && (
-        <UpgradeModal plan={user.plan ?? 'free'} premiumUntil={user.premium_until}
+        <UpgradeModal plan={user.plan ?? 'free'}
           message={upgradeMsg || undefined}
           onClose={() => setUpgradeMsg(null)}
           onChanged={onUserChanged} />
