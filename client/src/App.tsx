@@ -107,6 +107,7 @@ function Login({ onAuth }: { onAuth: (user: User) => void }) {
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [inviteCode, setInviteCode] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -115,7 +116,9 @@ function Login({ onAuth }: { onAuth: (user: User) => void }) {
     setBusy(true);
     setError('');
     try {
-      const data = await post<{ token: string; user: User }>(`/api/${mode}`, { username, password });
+      const body: Record<string, string> = { username, password };
+      if (mode === 'register' && inviteCode.trim()) body.invite_code = inviteCode.trim();
+      const data = await post<{ token: string; user: User }>(`/api/${mode}`, body);
       setToken(data.token);
       onAuth(data.user);
     } catch (err: any) {
@@ -137,6 +140,10 @@ function Login({ onAuth }: { onAuth: (user: User) => void }) {
         </p>
         <input className={inputBase} placeholder="Usuario" value={username} onChange={(e) => setUsername(e.target.value)} autoFocus />
         <input className={inputBase} placeholder="Contraseña" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+        {mode === 'register' && (
+          <input className={inputBase} placeholder="Código de invitación (opcional)"
+            value={inviteCode} onChange={(e) => setInviteCode(e.target.value.toUpperCase())} />
+        )}
         {error && <div className="text-[13px] text-danger">{error}</div>}
         <button className={btnPrimary} disabled={busy}>
           {mode === 'login' ? 'Entrar' : 'Crear cuenta'}

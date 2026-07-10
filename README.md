@@ -31,6 +31,14 @@ activa 30 días renovables (ahí se integraría Stripe/MercadoPago) y
 en el siguiente acceso. El titular del plan Equipos invita miembros por username
 (`POST /api/team/members`) y estos reciben Premium mientras el equipo esté activo.
 
+### Códigos de invitación
+
+Los administradores (`users.is_admin = 1`, se asigna por SQL) generan códigos
+`OBST-XXXX-XXXX` desde el modal de planes, con días de prueba y usos configurables.
+Un colega los canjea al registrarse (campo opcional) o desde el modal
+(`POST /api/invites/redeem`) y recibe esos días de Premium. Cada usuario puede
+canjear un solo código.
+
 ## Funcionalidades premium
 
 - **Automatizaciones (Butler):** reglas por tablero — "cuando una tarjeta llegue a *Hecho* → marcarla completada / añadir etiqueta / fijar vencimiento". Se aplican automáticamente al mover tarjetas.

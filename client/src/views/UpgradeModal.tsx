@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { del, get, post } from '../api';
-import type { Plan, PlanLimits, PlanUsage, TeamInfo, User } from '../types';
+import type { InviteCode, Plan, PlanLimits, PlanUsage, TeamInfo, User } from '../types';
 import { btnGhost, btnSmall, inputBase, modalBackdrop, modalBox, modalClose } from '../ui';
 
 const FREE_FEATURES = [
@@ -49,8 +49,16 @@ export default function UpgradeModal({ plan, message, onClose, onChanged }: {
   const [me, setMe] = useState<Me | null>(null);
   const [busy, setBusy] = useState(false);
   const [memberName, setMemberName] = useState('');
+  const [redeemCode, setRedeemCode] = useState('');
+  const [invites, setInvites] = useState<InviteCode[] | null>(null);
+  const [inviteDays, setInviteDays] = useState('14');
+  const [inviteUses, setInviteUses] = useState('1');
+  const [copied, setCopied] = useState<number | null>(null);
 
-  const reload = useCallback(() => get<Me>('/api/me').then(setMe).catch(() => {}), []);
+  const reload = useCallback(() => get<Me>('/api/me').then((d) => {
+    setMe(d);
+    if (d.user.is_admin) get<{ invites: InviteCode[] }>('/api/invites').then((r) => setInvites(r.invites)).catch(() => {});
+  }).catch(() => {}), []);
   useEffect(() => { reload(); }, [reload]);
 
   const subscription = me?.user.subscription ?? 'none';
@@ -78,6 +86,28 @@ export default function UpgradeModal({ plan, message, onClose, onChanged }: {
     act(async () => { await post('/api/team/members', { username }); setMemberName(''); });
   };
   const removeMember = (userId: number) => act(() => del(`/api/team/members/${userId}`));
+
+  const redeem = () => {
+    const code = redeemCode.trim();
+    if (!code) return;
+    act(async () => {
+      const { days } = await post<{ days: number }>('/api/invites/redeem', { code });
+      setRedeemCode('');
+      alert(`¡Código canjeado! Tienes ${days} días de Premium.`);
+    });
+  };
+
+  const createInvite = () => act(() => post('/api/invites', {
+    trial_days: Number(inviteDays) || 14,
+    max_uses: Number(inviteUses) || 1,
+  }));
+  const deleteInvite = (id: number) => act(() => del(`/api/invites/${id}`));
+  const copyInvite = (invite: InviteCode) => {
+    navigator.clipboard.writeText(invite.code).then(() => {
+      setCopied(invite.id);
+      setTimeout(() => setCopied(null), 1500);
+    });
+  };
 
   const card = 'flex flex-1 flex-col gap-2.5 rounded-xl border p-4';
   const price = (n: string) => <span className="text-[13px]"><strong>{n} US$</strong><span className="text-dim"> /mes</span></span>;
@@ -196,6 +226,50 @@ export default function UpgradeModal({ plan, message, onClose, onChanged }: {
                 <button className={btnSmall} disabled={busy || !memberName.trim()}>Invitar</button>
               </form>
             )}
+          </div>
+        )}
+
+        {subscription === 'none' && (
+          <form className="flex items-center gap-2 rounded-xl border border-dashed border-edge px-4 py-3"
+            onSubmit={(e) => { e.preventDefault(); redeem(); }}>
+            <span className="text-[13px] text-dim">🎟 ¿Tienes un código de invitación?</span>
+            <input className={`${inputBase} flex-1 py-1.5 font-mono text-[13px] uppercase`} placeholder="OBST-XXXX-XXXX"
+              value={redeemCode} onChange={(e) => setRedeemCode(e.target.value.toUpperCase())} />
+            <button className={btnSmall} disabled={busy || !redeemCode.trim()}>Canjear</button>
+          </form>
+        )}
+
+        {!!me?.user.is_admin && (
+          <div className="rounded-xl border border-edge bg-ink p-4">
+            <div className="mb-2.5 flex flex-wrap items-center gap-2 text-[13px] font-semibold">
+              🎟 Códigos de invitación
+              <form className="ml-auto flex items-center gap-1.5 font-normal"
+                onSubmit={(e) => { e.preventDefault(); createInvite(); }}>
+                <input type="number" min={1} max={365} value={inviteDays} onChange={(e) => setInviteDays(e.target.value)}
+                  className="w-14 rounded-md border border-edge bg-raised px-1.5 py-1 text-center text-[12px] outline-none focus:border-accent" />
+                <span className="text-[11.5px] text-dim">días ×</span>
+                <input type="number" min={1} max={100} value={inviteUses} onChange={(e) => setInviteUses(e.target.value)}
+                  className="w-12 rounded-md border border-edge bg-raised px-1.5 py-1 text-center text-[12px] outline-none focus:border-accent" />
+                <span className="text-[11.5px] text-dim">usos</span>
+                <button className={btnSmall} disabled={busy}>+ Generar</button>
+              </form>
+            </div>
+            <div className="flex max-h-44 flex-col gap-1.5 overflow-y-auto">
+              {(invites ?? []).map((inv) => (
+                <div key={inv.id} className="flex items-center gap-2.5 rounded-lg bg-raised px-3 py-1.5 text-[12.5px]">
+                  <code className="font-mono text-[12.5px] text-accent">{inv.code}</code>
+                  <button className="text-[11px] text-dim transition-colors hover:text-fg" type="button"
+                    onClick={() => copyInvite(inv)}>{copied === inv.id ? '✓ copiado' : '⧉ copiar'}</button>
+                  <span className="text-dim">{inv.trial_days} días · {inv.used_count}/{inv.max_uses} usos</span>
+                  {inv.redeemed_by && <span className="overflow-hidden text-ellipsis whitespace-nowrap text-[11.5px] text-dim">→ {inv.redeemed_by}</span>}
+                  <button className="ml-auto text-xs text-danger opacity-80 hover:opacity-100" disabled={busy}
+                    onClick={() => deleteInvite(inv.id)}>Eliminar</button>
+                </div>
+              ))}
+              {(invites ?? []).length === 0 && (
+                <p className="text-[12.5px] text-dim">Genera un código y compártelo: quien lo canjee recibe días de Premium de regalo.</p>
+              )}
+            </div>
           </div>
         )}
 

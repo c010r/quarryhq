@@ -5,6 +5,11 @@ export interface User {
   plan?: Plan;                    // plan efectivo (incluye premium por asiento de equipo)
   subscription?: Subscription;    // lo contratado por este usuario
   premium_until?: string | null;
+  is_admin?: number;              // puede gestionar códigos de invitación
+}
+export interface InviteCode {
+  id: number; code: string; trial_days: number; max_uses: number; used_count: number;
+  created_at: string; redeemed_by: string | null;
 }
 export interface PlanLimits { boards: number; notes: number; channels: number; cardsPerBoard: number; noteVersions: number }
 export interface PlanUsage { boards: number; notes: number; channels: number }

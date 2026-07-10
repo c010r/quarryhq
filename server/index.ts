@@ -105,6 +105,48 @@ const requirePremium: express.RequestHandler = (req: AuthedRequest, res, next) =
     .catch(next);
 };
 
+const requireAdmin: express.RequestHandler = (req: AuthedRequest, res, next) => {
+  get<{ is_admin: number }>('SELECT is_admin FROM users WHERE id = $1', [req.userId!])
+    .then((row) => {
+      if (!row?.is_admin) return res.status(403).json({ error: 'Solo administradores' });
+      next();
+    })
+    .catch(next);
+};
+
+// ---------- Códigos de invitación ----------
+// Regalan días de Premium. Cada usuario puede canjear un solo código.
+function generateInviteCode(): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // sin 0/O ni 1/I
+  let s = '';
+  for (let i = 0; i < 8; i++) s += alphabet[crypto.randomInt(alphabet.length)];
+  return `OBST-${s.slice(0, 4)}-${s.slice(4)}`;
+}
+
+async function redeemInvite(userId: number, rawCode: string): Promise<{ ok: true; days: number } | { ok: false; error: string }> {
+  const code = rawCode.trim().toUpperCase();
+  const invite = await get<{ id: number; trial_days: number; max_uses: number; used_count: number }>(
+    'SELECT * FROM invite_codes WHERE code = $1', [code]);
+  if (!invite || invite.used_count >= invite.max_uses) {
+    return { ok: false, error: 'Código de invitación inválido o agotado' };
+  }
+  const prior = await get('SELECT 1 FROM invite_redemptions WHERE user_id = $1', [userId]);
+  if (prior) return { ok: false, error: 'Ya canjeaste un código de invitación' };
+
+  await run('INSERT INTO invite_redemptions (code_id, user_id) VALUES ($1, $2)', [invite.id, userId]);
+  await run('UPDATE invite_codes SET used_count = used_count + 1 WHERE id = $1', [invite.id]);
+
+  // Suma los días de prueba al premium existente (o arranca desde hoy)
+  const row = await get<{ plan: string; premium_until: string | null }>(
+    'SELECT plan, premium_until FROM users WHERE id = $1', [userId]);
+  const nowIso = new Date().toISOString();
+  const from = row?.premium_until && row.premium_until > nowIso ? new Date(row.premium_until) : new Date();
+  const until = new Date(from.getTime() + invite.trial_days * 24 * 60 * 60 * 1000).toISOString();
+  const tier = row?.plan === 'team' ? 'team' : 'premium';
+  await run('UPDATE users SET plan = $1, premium_until = $2 WHERE id = $3', [tier, until, userId]);
+  return { ok: true, days: invite.trial_days };
+}
+
 // true = puede crear; false = ya respondió 403 por límite del plan Free
 async function withinLimit(req: AuthedRequest, res: express.Response,
   countSql: string, params: unknown[], limit: number, what: string): Promise<boolean> {
@@ -127,10 +169,27 @@ app.post('/api/register', h(async (req, res) => {
   }
   const existing = await get('SELECT id FROM users WHERE username = $1', [username.trim()]);
   if (existing) return res.status(409).json({ error: 'Ese usuario ya existe' });
+
+  // Código de invitación opcional: se valida antes de crear la cuenta para
+  // que un código mal escrito no deje al colega registrado sin su prueba
+  const inviteCode = (req.body?.invite_code ?? '').trim();
+  if (inviteCode) {
+    const invite = await get<{ max_uses: number; used_count: number }>(
+      'SELECT max_uses, used_count FROM invite_codes WHERE code = $1', [inviteCode.toUpperCase()]);
+    if (!invite || invite.used_count >= invite.max_uses) {
+      return res.status(400).json({ error: 'Código de invitación inválido o agotado' });
+    }
+  }
+
   const userId = await insert('INSERT INTO users (username, password_hash) VALUES ($1, $2)', [username.trim(), hashPassword(password)]);
+  let plan: 'free' | 'premium' = 'free';
+  if (inviteCode) {
+    const redeemed = await redeemInvite(userId, inviteCode);
+    if (redeemed.ok) plan = 'premium';
+  }
   const token = crypto.randomBytes(32).toString('hex');
   await run('INSERT INTO sessions (token, user_id) VALUES ($1, $2)', [token, userId]);
-  res.json({ token, user: { id: userId, username: username.trim(), plan: 'free' } });
+  res.json({ token, user: { id: userId, username: username.trim(), plan } });
 }));
 
 app.post('/api/login', h(async (req, res) => {
@@ -198,7 +257,7 @@ app.post('/api/auth/google', h(async (req, res) => {
 
 app.get('/api/me', requireAuth, h(async (req: AuthedRequest, res) => {
   const plan = await userPlan(req.userId!); // primero: degrada suscripciones vencidas
-  const row = await get('SELECT id, username, name, picture, plan, premium_until FROM users WHERE id = $1', [req.userId!]);
+  const row = await get('SELECT id, username, name, picture, plan, premium_until, is_admin FROM users WHERE id = $1', [req.userId!]);
 
   // Información de equipo: titular ve sus miembros; un miembro ve a su titular
   let team: unknown = null;
@@ -251,6 +310,41 @@ app.post('/api/billing/upgrade', requireAuth, h(async (req: AuthedRequest, res) 
 app.post('/api/billing/cancel', requireAuth, h(async (req: AuthedRequest, res) => {
   await run(`UPDATE users SET plan = 'free', premium_until = NULL WHERE id = $1`, [req.userId!]);
   res.json({ plan: 'free', premium_until: null });
+}));
+
+// ---------- Códigos de invitación: canje y administración ----------
+app.post('/api/invites/redeem', requireAuth, h(async (req: AuthedRequest, res) => {
+  const code = (req.body?.code ?? '').trim();
+  if (!code) return res.status(400).json({ error: 'Código requerido' });
+  const result = await redeemInvite(req.userId!, code);
+  if (!result.ok) return res.status(400).json({ error: result.error });
+  res.json({ ok: true, days: result.days });
+}));
+
+app.get('/api/invites', requireAuth, requireAdmin, h(async (_req, res) => {
+  const invites = await all(`
+    SELECT invite_codes.*,
+      (SELECT string_agg(users.username, ', ' ORDER BY users.username)
+       FROM invite_redemptions JOIN users ON users.id = invite_redemptions.user_id
+       WHERE invite_redemptions.code_id = invite_codes.id) AS redeemed_by
+    FROM invite_codes ORDER BY invite_codes.id DESC
+  `);
+  res.json({ invites });
+}));
+
+app.post('/api/invites', requireAuth, requireAdmin, h(async (req: AuthedRequest, res) => {
+  const trialDays = Math.min(365, Math.max(1, Number(req.body?.trial_days) || 14));
+  const maxUses = Math.min(100, Math.max(1, Number(req.body?.max_uses) || 1));
+  let code = generateInviteCode();
+  while (await get('SELECT 1 FROM invite_codes WHERE code = $1', [code])) code = generateInviteCode();
+  await insert('INSERT INTO invite_codes (code, created_by, trial_days, max_uses) VALUES ($1, $2, $3, $4)',
+    [code, req.userId!, trialDays, maxUses]);
+  res.json({ code, trial_days: trialDays, max_uses: maxUses });
+}));
+
+app.delete('/api/invites/:id', requireAuth, requireAdmin, h(async (req, res) => {
+  await run('DELETE FROM invite_codes WHERE id = $1', [Number(req.params.id)]);
+  res.json({ ok: true });
 }));
 
 // ---------- Equipo (plan Equipos: titular + 4 miembros) ----------

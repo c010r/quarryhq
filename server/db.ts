@@ -164,6 +164,24 @@ export async function initSchema() {
       PRIMARY KEY (message_id, user_id, emoji)
     );
 
+    -- Códigos de invitación: regalan días de Premium; los gestiona un admin
+    CREATE TABLE IF NOT EXISTS invite_codes (
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      code TEXT NOT NULL UNIQUE,
+      created_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      trial_days INTEGER NOT NULL DEFAULT 14,
+      max_uses INTEGER NOT NULL DEFAULT 1,
+      used_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT ${NOW_UTC}
+    );
+
+    CREATE TABLE IF NOT EXISTS invite_redemptions (
+      code_id INTEGER NOT NULL REFERENCES invite_codes(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      redeemed_at TEXT NOT NULL DEFAULT ${NOW_UTC},
+      PRIMARY KEY (code_id, user_id)
+    );
+
     -- Plan Equipos: el titular (users.plan = 'team') da Premium a sus miembros
     CREATE TABLE IF NOT EXISTS team_seats (
       owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -186,9 +204,11 @@ export async function initSchema() {
     ALTER TABLE users ADD COLUMN IF NOT EXISTS name TEXT;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS picture TEXT;
     ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL;
-    -- Freemium: plan por usuario ('free' | 'premium') y vencimiento del premium
+    -- Freemium: plan por usuario ('free' | 'premium' | 'team') y vencimiento
     ALTER TABLE users ADD COLUMN IF NOT EXISTS plan TEXT NOT NULL DEFAULT 'free';
     ALTER TABLE users ADD COLUMN IF NOT EXISTS premium_until TEXT;
+    -- Admin: puede generar y gestionar códigos de invitación
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin INTEGER NOT NULL DEFAULT 0;
     CREATE UNIQUE INDEX IF NOT EXISTS users_google_sub_idx ON users (google_sub);
   `);
 }
