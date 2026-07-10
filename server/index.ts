@@ -905,8 +905,10 @@ app.get('/api/health', h(async (_req, res) => {
   res.json({ ok: true });
 }));
 
-// PORT lo inyectan las plataformas de contenedores; API_PORT es el override local
-const PORT = Number(process.env.PORT ?? process.env.API_PORT) || 3001;
+// PORT lo inyectan las plataformas de contenedores (solo cuenta en producción:
+// en dev PORT es el puerto de Vite); API_PORT es el override local de la API
+const platformPort = process.env.NODE_ENV === 'production' ? process.env.PORT : undefined;
+const PORT = Number(platformPort ?? process.env.API_PORT) || 3001;
 
 async function main() {
   await initSchema();
