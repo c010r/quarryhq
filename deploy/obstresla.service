@@ -1,0 +1,21 @@
+# /etc/systemd/system/obstresla.service
+# Activar:  sudo systemctl daemon-reload && sudo systemctl enable --now obstresla
+# Logs:     journalctl -u obstresla -f
+
+[Unit]
+Description=Obstresla (tableros + notas + chat)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+WorkingDirectory=/opt/obstresla
+Environment=NODE_ENV=production
+# DATABASE_URL y GOOGLE_CLIENT_ID van en /opt/obstresla/.env (la app lo carga sola)
+ExecStart=/usr/bin/npx tsx server/index.ts
+Restart=always
+RestartSec=3
+User=obstresla
+Group=obstresla
+
+[Install]
+WantedBy=multi-user.target

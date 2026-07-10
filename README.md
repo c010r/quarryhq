@@ -67,8 +67,47 @@ npm run migrate:sqlite   # copia todos los datos a PostgreSQL (aborta si PG ya t
 
 ```bash
 npm run build      # compila el cliente a client/dist
-npm start          # Express sirve API + estáticos en :3001
+npm start          # Express sirve API + estáticos en :3001 (o $PORT)
 ```
+
+También hay `Dockerfile` (multi-stage, expone :3001) para plataformas de contenedores.
+
+### Despliegue en VPS (obstresla.bookingly.cloud)
+
+Plantillas listas en [`deploy/`](deploy/): bloque de nginx con proxy WebSocket,
+unidad systemd y script de backup diario. Resumen en un VPS Ubuntu/Debian:
+
+```bash
+# 1. Node 24 + PostgreSQL 16
+curl -fsSL https://deb.nodesource.com/setup_24.x | sudo bash - && sudo apt install -y nodejs postgresql nginx certbot python3-certbot-nginx
+sudo -u postgres psql -c "CREATE USER obstresla WITH PASSWORD '…';"
+sudo -u postgres psql -c "CREATE DATABASE obstresla OWNER obstresla;"
+
+# 2. App (usuario de sistema propio + .env con DATABASE_URL y GOOGLE_CLIENT_ID)
+sudo useradd -r -m -d /opt/obstresla obstresla
+sudo -u obstresla git clone https://github.com/c010r/obstresla.git /opt/obstresla
+cd /opt/obstresla && sudo -u obstresla npm ci && sudo -u obstresla npm run build
+sudo -u obstresla nano /opt/obstresla/.env   # DATABASE_URL=… GOOGLE_CLIENT_ID=…
+
+# 3. Servicio + nginx + HTTPS
+sudo cp deploy/obstresla.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now obstresla
+sudo cp deploy/nginx-obstresla.conf /etc/nginx/sites-available/obstresla
+sudo ln -s /etc/nginx/sites-available/obstresla /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot --nginx -d obstresla.bookingly.cloud
+
+# 4. Firewall + backups
+sudo ufw allow OpenSSH && sudo ufw allow 'Nginx Full' && sudo ufw enable
+sudo cp deploy/backup-db.sh /usr/local/bin/obstresla-backup && sudo chmod +x /usr/local/bin/obstresla-backup
+echo '15 4 * * * root /usr/local/bin/obstresla-backup' | sudo tee /etc/cron.d/obstresla-backup
+```
+
+Requisitos externos: registro DNS `A` de `obstresla.bookingly.cloud` → IP del VPS,
+y añadir `https://obstresla.bookingly.cloud` a los orígenes autorizados del OAuth
+client en Google Cloud.
+
+Actualizar: `cd /opt/obstresla && sudo -u obstresla git pull && sudo -u obstresla npm ci && sudo -u obstresla npm run build && sudo systemctl restart obstresla`
 
 ## Estructura
 

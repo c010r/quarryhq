@@ -1,0 +1,8 @@
+node_modules
+client/dist
+data
+.git
+.claude
+.env
+*.log
+README.md

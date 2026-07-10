@@ -899,7 +899,14 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
   if (!res.headersSent) res.status(500).json({ error: 'Error interno del servidor' });
 });
 
-const PORT = Number(process.env.API_PORT) || 3001;
+// Health check para balanceadores (ALB/Cloud Run); confirma que la base responde
+app.get('/api/health', h(async (_req, res) => {
+  await get('SELECT 1');
+  res.json({ ok: true });
+}));
+
+// PORT lo inyectan las plataformas de contenedores; API_PORT es el override local
+const PORT = Number(process.env.PORT ?? process.env.API_PORT) || 3001;
 
 async function main() {
   await initSchema();
