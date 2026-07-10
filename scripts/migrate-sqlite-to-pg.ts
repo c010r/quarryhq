@@ -1,4 +1,4 @@
-// Migración única de datos: data/obstresla.db (SQLite) → PostgreSQL.
+// Migración única de datos: data/quarryhq.db (SQLite) → PostgreSQL.
 // Uso: npx tsx scripts/migrate-sqlite-to-pg.ts
 // Idempotente a nivel grueso: si Postgres ya tiene datos, aborta.
 import { DatabaseSync } from 'node:sqlite';
@@ -6,7 +6,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { pool, initSchema } from '../server/db.ts';
 
-const sqlitePath = path.join(process.cwd(), 'data', 'obstresla.db');
+const sqlitePath = path.join(process.cwd(), 'data', 'quarryhq.db');
 
 // Tablas en orden de dependencias (FK). id = true → identidad que hay que preservar
 const TABLES: { name: string; columns: string[]; hasId: boolean }[] = [
@@ -31,7 +31,7 @@ const TABLES: { name: string; columns: string[]; hasId: boolean }[] = [
 
 async function main() {
   if (!fs.existsSync(sqlitePath)) {
-    console.log('No hay base SQLite en data/obstresla.db — nada que migrar.');
+    console.log('No hay base SQLite en data/quarryhq.db — nada que migrar.');
     process.exit(0);
   }
 

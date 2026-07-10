@@ -7,7 +7,7 @@ try { process.loadEnvFile(); } catch { /* sin .env */ }
 // bigint (COUNT, SUM) llega como string por defecto; lo convertimos a number
 pg.types.setTypeParser(20, (v) => parseInt(v, 10));
 
-const connectionString = process.env.DATABASE_URL ?? 'postgres://postgres:postgres@localhost:5432/obstresla';
+const connectionString = process.env.DATABASE_URL ?? 'postgres://postgres:postgres@localhost:5432/quarryhq';
 export const pool = new pg.Pool({ connectionString });
 
 // ---------- Helpers de consulta ----------

@@ -68,7 +68,7 @@ canjear un solo código.
 ## Desarrollo
 
 Requisitos: Node 24+ y PostgreSQL corriendo. Por defecto conecta a
-`postgres://postgres:postgres@localhost:5432/obstresla` — configurable con la variable `DATABASE_URL`.
+`postgres://postgres:postgres@localhost:5432/quarryhq` — configurable con la variable `DATABASE_URL`.
 
 Las variables se pueden definir en un `.env` en la raíz (ignorado por git), p. ej.:
 
@@ -78,7 +78,7 @@ GOOGLE_CLIENT_ID=xxxxx.apps.googleusercontent.com
 
 ```bash
 # una sola vez: crear la base
-psql -U postgres -c "CREATE DATABASE obstresla;"
+psql -U postgres -c "CREATE DATABASE quarryhq;"
 
 npm install
 npm run dev        # servidor API en :3001 + Vite en :5173
@@ -88,7 +88,7 @@ Abre http://localhost:5173, crea una cuenta y listo. El esquema y los datos de e
 
 ### Migración desde SQLite
 
-Si vienes de la versión anterior con `data/obstresla.db`:
+Si vienes de la versión anterior con `data/quarryhq.db`:
 
 ```bash
 npm run migrate:sqlite   # copia todos los datos a PostgreSQL (aborta si PG ya tiene usuarios)
@@ -111,34 +111,34 @@ unidad systemd y script de backup diario. Resumen en un VPS Ubuntu/Debian:
 ```bash
 # 1. Node 24 + PostgreSQL 16
 curl -fsSL https://deb.nodesource.com/setup_24.x | sudo bash - && sudo apt install -y nodejs postgresql nginx certbot python3-certbot-nginx
-sudo -u postgres psql -c "CREATE USER obstresla WITH PASSWORD '…';"
-sudo -u postgres psql -c "CREATE DATABASE obstresla OWNER obstresla;"
+sudo -u postgres psql -c "CREATE USER quarryhq WITH PASSWORD '…';"
+sudo -u postgres psql -c "CREATE DATABASE quarryhq OWNER quarryhq;"
 
 # 2. App (usuario de sistema propio + .env con DATABASE_URL y GOOGLE_CLIENT_ID)
-sudo useradd -r -m -d /opt/obstresla obstresla
-sudo -u obstresla git clone https://github.com/c010r/obstresla.git /opt/obstresla
-cd /opt/obstresla && sudo -u obstresla npm ci && sudo -u obstresla npm run build
-sudo -u obstresla nano /opt/obstresla/.env   # DATABASE_URL=… GOOGLE_CLIENT_ID=…
+sudo useradd -r -m -d /opt/quarryhq quarryhq
+sudo -u quarryhq git clone https://github.com/c010r/quarryhq.git /opt/quarryhq
+cd /opt/quarryhq && sudo -u quarryhq npm ci && sudo -u quarryhq npm run build
+sudo -u quarryhq nano /opt/quarryhq/.env   # DATABASE_URL=… GOOGLE_CLIENT_ID=…
 
 # 3. Servicio + nginx + HTTPS
-sudo cp deploy/obstresla.service /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl enable --now obstresla
-sudo cp deploy/nginx-quarryhq.conf /etc/nginx/sites-available/obstresla
-sudo ln -s /etc/nginx/sites-available/obstresla /etc/nginx/sites-enabled/
+sudo cp deploy/quarryhq.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now quarryhq
+sudo cp deploy/nginx-quarryhq.conf /etc/nginx/sites-available/quarryhq
+sudo ln -s /etc/nginx/sites-available/quarryhq /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
 sudo certbot --nginx -d quarryhq.pro
 
 # 4. Firewall + backups
 sudo ufw allow OpenSSH && sudo ufw allow 'Nginx Full' && sudo ufw enable
-sudo cp deploy/backup-db.sh /usr/local/bin/obstresla-backup && sudo chmod +x /usr/local/bin/obstresla-backup
-echo '15 4 * * * root /usr/local/bin/obstresla-backup' | sudo tee /etc/cron.d/obstresla-backup
+sudo cp deploy/backup-db.sh /usr/local/bin/quarryhq-backup && sudo chmod +x /usr/local/bin/quarryhq-backup
+echo '15 4 * * * root /usr/local/bin/quarryhq-backup' | sudo tee /etc/cron.d/quarryhq-backup
 ```
 
 Requisitos externos: registro DNS `A` de `quarryhq.pro` → IP del VPS,
 y añadir `https://quarryhq.pro` a los orígenes autorizados del OAuth
 client en Google Cloud.
 
-Actualizar: `cd /opt/obstresla && sudo -u obstresla git pull && sudo -u obstresla npm ci && sudo -u obstresla npm run build && sudo systemctl restart obstresla`
+Actualizar: `cd /opt/quarryhq && sudo -u quarryhq git pull && sudo -u quarryhq npm ci && sudo -u quarryhq npm run build && sudo systemctl restart quarryhq`
 
 ## Estructura
 

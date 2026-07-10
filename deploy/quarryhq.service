@@ -1,0 +1,21 @@
+# /etc/systemd/system/quarryhq.service
+# Activar:  sudo systemctl daemon-reload && sudo systemctl enable --now quarryhq
+# Logs:     journalctl -u quarryhq -f
+
+[Unit]
+Description=QuarryHQ (tableros + notas + chat)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+WorkingDirectory=/opt/quarryhq
+Environment=NODE_ENV=production
+# DATABASE_URL y GOOGLE_CLIENT_ID van en /opt/quarryhq/.env (la app lo carga sola)
+ExecStart=/usr/bin/npx tsx server/index.ts
+Restart=always
+RestartSec=3
+User=quarryhq
+Group=quarryhq
+
+[Install]
+WantedBy=multi-user.target
