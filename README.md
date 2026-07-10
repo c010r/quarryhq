@@ -72,7 +72,7 @@ npm start          # Express sirve API + estáticos en :3001 (o $PORT)
 
 También hay `Dockerfile` (multi-stage, expone :3001) para plataformas de contenedores.
 
-### Despliegue en VPS (obstresla.bookingly.cloud)
+### Despliegue en VPS (obstresla.pro)
 
 Plantillas listas en [`deploy/`](deploy/): bloque de nginx con proxy WebSocket,
 unidad systemd y script de backup diario. Resumen en un VPS Ubuntu/Debian:
@@ -95,7 +95,7 @@ sudo systemctl daemon-reload && sudo systemctl enable --now obstresla
 sudo cp deploy/nginx-obstresla.conf /etc/nginx/sites-available/obstresla
 sudo ln -s /etc/nginx/sites-available/obstresla /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
-sudo certbot --nginx -d obstresla.bookingly.cloud
+sudo certbot --nginx -d obstresla.pro
 
 # 4. Firewall + backups
 sudo ufw allow OpenSSH && sudo ufw allow 'Nginx Full' && sudo ufw enable
@@ -103,8 +103,8 @@ sudo cp deploy/backup-db.sh /usr/local/bin/obstresla-backup && sudo chmod +x /us
 echo '15 4 * * * root /usr/local/bin/obstresla-backup' | sudo tee /etc/cron.d/obstresla-backup
 ```
 
-Requisitos externos: registro DNS `A` de `obstresla.bookingly.cloud` → IP del VPS,
-y añadir `https://obstresla.bookingly.cloud` a los orígenes autorizados del OAuth
+Requisitos externos: registro DNS `A` de `obstresla.pro` → IP del VPS,
+y añadir `https://obstresla.pro` a los orígenes autorizados del OAuth
 client en Google Cloud.
 
 Actualizar: `cd /opt/obstresla && sudo -u obstresla git pull && sudo -u obstresla npm ci && sudo -u obstresla npm run build && sudo systemctl restart obstresla`
