@@ -429,6 +429,25 @@ app.post('/api/invites/redeem', requireAuth, h(async (req: AuthedRequest, res) =
   res.json({ ok: true, days: result.days });
 }));
 
+// Estadísticas del SaaS para el backend de administración
+app.get('/api/admin/stats', requireAuth, requireAdmin, h(async (_req, res) => {
+  const nowIso = new Date().toISOString();
+  const [users, premium, team, verified, redemptions] = await Promise.all([
+    get<{ n: number }>('SELECT COUNT(*)::int AS n FROM users'),
+    get<{ n: number }>(`SELECT COUNT(*)::int AS n FROM users WHERE plan = 'premium' AND (premium_until IS NULL OR premium_until >= $1)`, [nowIso]),
+    get<{ n: number }>(`SELECT COUNT(*)::int AS n FROM users WHERE plan = 'team' AND (premium_until IS NULL OR premium_until >= $1)`, [nowIso]),
+    get<{ n: number }>('SELECT COUNT(*)::int AS n FROM users WHERE email_verified = 1'),
+    get<{ n: number }>('SELECT COUNT(*)::int AS n FROM invite_redemptions'),
+  ]);
+  res.json({
+    users: users?.n ?? 0,
+    premium_subs: premium?.n ?? 0,
+    team_subs: team?.n ?? 0,
+    verified: verified?.n ?? 0,
+    invite_redemptions: redemptions?.n ?? 0,
+  });
+}));
+
 app.get('/api/invites', requireAuth, requireAdmin, h(async (_req, res) => {
   const invites = await all(`
     SELECT invite_codes.*,

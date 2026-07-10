@@ -7,6 +7,7 @@ import ChatView from './views/ChatView';
 import GraphView from './views/GraphView';
 import SearchPalette from './views/SearchPalette';
 import UpgradeModal from './views/UpgradeModal';
+import AdminView from './views/AdminView';
 import { btnPrimary, btnGhost, emptyState, inputBase, sideHeading, sideIcon, sideItem, sideLabel } from './ui';
 
 function useHashRoute(): string[] {
@@ -416,6 +417,11 @@ function Workspace({ user, onLogout, onUserChanged }: {
           <button className={sideItem(section === 'graph')} onClick={() => navigate('/graph')}>
             <span className={sideIcon}>◉</span><span className={sideLabel}>Grafo de conocimiento</span>
           </button>
+          {!!user.is_admin && (
+            <button className={sideItem(section === 'admin')} onClick={() => navigate('/admin')}>
+              <span className={sideIcon}>⚙</span><span className={sideLabel}>Administración</span>
+            </button>
+          )}
         </div>
 
         <div className="mt-auto">
@@ -453,6 +459,7 @@ function Workspace({ user, onLogout, onUserChanged }: {
         )}
         {section === 'chat' && param && <ChatView channelId={Number(param)} user={user} isPremium={isPremium} />}
         {section === 'graph' && <GraphView />}
+        {section === 'admin' && <AdminView />}
         {!section && (
           <div className={emptyState}>
             <h3 className="font-display text-base font-bold text-fg">Bienvenido a QuarryHQ</h3>
@@ -490,9 +497,13 @@ export default function App() {
       .finally(() => setLoading(false));
   }, []);
 
+  // Tras autenticarse se refresca el perfil completo (la respuesta del login
+  // no trae is_admin ni la suscripción)
+  const onAuth = (u: User) => { setUser(u); refreshUser(); };
+
   if (loading) return <div className={`${emptyState} h-screen`}>Cargando…</div>;
   const resetMatch = location.hash.match(/^#\/reset\/([a-f0-9]{64})$/);
-  if (resetMatch) return <ResetPassword token={resetMatch[1]} onAuth={setUser} />;
-  if (!user) return <Login onAuth={setUser} />;
+  if (resetMatch) return <ResetPassword token={resetMatch[1]} onAuth={onAuth} />;
+  if (!user) return <Login onAuth={onAuth} />;
   return <Workspace user={user} onLogout={() => setUser(null)} onUserChanged={refreshUser} />;
 }
