@@ -182,6 +182,7 @@ const requireAuth: express.RequestHandler = (req: AuthedRequest, res, next) => {
 const FREE_LIMITS = { boards: 2, notes: 20, channels: 3, cardsPerBoard: 50, noteVersions: 3 };
 const PREMIUM_DAYS = 30;
 const TEAM_EXTRA_SEATS = 4; // el plan Equipos cubre 5 cuentas: titular + 4 miembros
+const PLAN_PRICES_CENTS: Record<'premium' | 'team', number> = { premium: 999, team: 1999 };
 
 // Plan efectivo del usuario: premium propio (individual o Equipos, no vencido)
 // o un asiento en el equipo activo de otro usuario.
@@ -508,6 +509,9 @@ app.post('/api/billing/upgrade', requireAuth, h(async (req: AuthedRequest, res) 
   const from = row?.premium_until && row.premium_until > nowIso ? new Date(row.premium_until) : new Date();
   const until = new Date(from.getTime() + PREMIUM_DAYS * 24 * 60 * 60 * 1000).toISOString();
   await run(`UPDATE users SET plan = $1, premium_until = $2 WHERE id = $3`, [tier, until, req.userId!]);
+  // Registro del cobro (la pasarela real reemplaza el método 'simulado')
+  await insert('INSERT INTO payments (user_id, plan, amount_cents, days) VALUES ($1, $2, $3, $4)',
+    [req.userId!, tier, PLAN_PRICES_CENTS[tier], PREMIUM_DAYS]);
   res.json({ plan: tier, premium_until: until });
 }));
 
@@ -528,12 +532,13 @@ app.post('/api/invites/redeem', requireAuth, h(async (req: AuthedRequest, res) =
 // Estadísticas del SaaS para el backend de administración
 app.get('/api/admin/stats', requireAuth, requireAdmin, h(async (_req, res) => {
   const nowIso = new Date().toISOString();
-  const [users, premium, team, verified, redemptions] = await Promise.all([
+  const [users, premium, team, verified, redemptions, revenue] = await Promise.all([
     get<{ n: number }>('SELECT COUNT(*)::int AS n FROM users'),
     get<{ n: number }>(`SELECT COUNT(*)::int AS n FROM users WHERE plan = 'premium' AND (premium_until IS NULL OR premium_until >= $1)`, [nowIso]),
     get<{ n: number }>(`SELECT COUNT(*)::int AS n FROM users WHERE plan = 'team' AND (premium_until IS NULL OR premium_until >= $1)`, [nowIso]),
     get<{ n: number }>('SELECT COUNT(*)::int AS n FROM users WHERE email_verified = 1'),
     get<{ n: number }>('SELECT COUNT(*)::int AS n FROM invite_redemptions'),
+    get<{ n: number }>('SELECT COALESCE(SUM(amount_cents), 0)::int AS n FROM payments'),
   ]);
   res.json({
     users: users?.n ?? 0,
@@ -541,7 +546,69 @@ app.get('/api/admin/stats', requireAuth, requireAdmin, h(async (_req, res) => {
     team_subs: team?.n ?? 0,
     verified: verified?.n ?? 0,
     invite_redemptions: redemptions?.n ?? 0,
+    revenue_cents: revenue?.n ?? 0,
   });
+}));
+
+// ---------- Administración: usuarios ----------
+app.get('/api/admin/users', requireAuth, requireAdmin, h(async (_req, res) => {
+  const users = await all(`
+    SELECT users.id, users.username, users.email, users.name, users.plan, users.premium_until,
+      users.is_admin, users.email_verified, users.created_at,
+      (users.google_sub IS NOT NULL)::int AS has_google,
+      (SELECT owner.username FROM team_seats JOIN users owner ON owner.id = team_seats.owner_id
+        WHERE team_seats.user_id = users.id LIMIT 1) AS team_owner
+    FROM users ORDER BY users.id DESC
+  `);
+  res.json({ users });
+}));
+
+// Premium de cortesía: extiende N días sin registrar pago
+app.post('/api/admin/users/:id/premium', requireAuth, requireAdmin, h(async (req: AuthedRequest, res) => {
+  const userId = Number(req.params.id);
+  const days = Math.min(365, Math.max(1, Number(req.body?.days) || 30));
+  const row = await get<{ plan: string; premium_until: string | null }>(
+    'SELECT plan, premium_until FROM users WHERE id = $1', [userId]);
+  if (!row) return res.status(404).json({ error: 'Usuario no encontrado' });
+  const nowIso = new Date().toISOString();
+  const from = row.premium_until && row.premium_until > nowIso ? new Date(row.premium_until) : new Date();
+  const until = new Date(from.getTime() + days * 24 * 60 * 60 * 1000).toISOString();
+  const tier = row.plan === 'team' ? 'team' : 'premium';
+  await run('UPDATE users SET plan = $1, premium_until = $2 WHERE id = $3', [tier, until, userId]);
+  res.json({ ok: true, premium_until: until });
+}));
+
+app.delete('/api/admin/users/:id/premium', requireAuth, requireAdmin, h(async (req, res) => {
+  await run(`UPDATE users SET plan = 'free', premium_until = NULL WHERE id = $1`, [Number(req.params.id)]);
+  res.json({ ok: true });
+}));
+
+app.post('/api/admin/users/:id/toggle-admin', requireAuth, requireAdmin, h(async (req: AuthedRequest, res) => {
+  const userId = Number(req.params.id);
+  if (userId === req.userId) return res.status(400).json({ error: 'No puedes cambiar tu propio rol de administrador' });
+  const row = await get<{ is_admin: number }>('SELECT is_admin FROM users WHERE id = $1', [userId]);
+  if (!row) return res.status(404).json({ error: 'Usuario no encontrado' });
+  await run('UPDATE users SET is_admin = $1 WHERE id = $2', [row.is_admin ? 0 : 1, userId]);
+  res.json({ ok: true, is_admin: row.is_admin ? 0 : 1 });
+}));
+
+app.delete('/api/admin/users/:id', requireAuth, requireAdmin, h(async (req: AuthedRequest, res) => {
+  const userId = Number(req.params.id);
+  if (userId === req.userId) return res.status(400).json({ error: 'No puedes eliminar tu propia cuenta' });
+  const deleted = await run('DELETE FROM users WHERE id = $1', [userId]);
+  if (!deleted) return res.status(404).json({ error: 'Usuario no encontrado' });
+  res.json({ ok: true });
+}));
+
+// ---------- Administración: pagos ----------
+app.get('/api/admin/payments', requireAuth, requireAdmin, h(async (_req, res) => {
+  const payments = await all(`
+    SELECT payments.*, users.username, users.email
+    FROM payments JOIN users ON users.id = payments.user_id
+    ORDER BY payments.id DESC LIMIT 500
+  `);
+  const total = await get<{ n: number }>('SELECT COALESCE(SUM(amount_cents), 0)::int AS n FROM payments');
+  res.json({ payments, total_cents: total?.n ?? 0 });
 }));
 
 app.get('/api/invites', requireAuth, requireAdmin, h(async (_req, res) => {

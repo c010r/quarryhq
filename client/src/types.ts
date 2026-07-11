@@ -13,6 +13,17 @@ export interface InviteCode {
   id: number; code: string; trial_days: number; max_uses: number; used_count: number;
   created_at: string; redeemed_by: string | null;
 }
+export interface AdminUser {
+  id: number; username: string; email: string | null; name: string | null;
+  plan: 'free' | 'premium' | 'team'; premium_until: string | null;
+  is_admin: number; email_verified: number; has_google: number;
+  team_owner: string | null; created_at: string;
+}
+export interface AdminPayment {
+  id: number; user_id: number; username: string; email: string | null;
+  plan: string; amount_cents: number; currency: string; days: number;
+  method: string; created_at: string;
+}
 export interface PlanLimits { boards: number; notes: number; channels: number; cardsPerBoard: number; noteVersions: number }
 export interface PlanUsage { boards: number; notes: number; channels: number }
 export type TeamInfo =

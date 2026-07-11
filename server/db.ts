@@ -212,6 +212,18 @@ export async function initSchema() {
       PRIMARY KEY (code_id, user_id)
     );
 
+    -- Historial de pagos (hoy simulados; la pasarela real insertará aquí)
+    CREATE TABLE IF NOT EXISTS payments (
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      plan TEXT NOT NULL,
+      amount_cents INTEGER NOT NULL,
+      currency TEXT NOT NULL DEFAULT 'USD',
+      days INTEGER NOT NULL,
+      method TEXT NOT NULL DEFAULT 'simulado',
+      created_at TEXT NOT NULL DEFAULT ${NOW_UTC}
+    );
+
     -- Plan Equipos: el titular (users.plan = 'team') da Premium a sus miembros
     CREATE TABLE IF NOT EXISTS team_seats (
       owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
