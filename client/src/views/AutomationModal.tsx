@@ -42,7 +42,7 @@ export default function AutomationModal({ boardId, lists, onClose }: {
 
   return (
     <div className={modalBackdrop} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="flex w-[560px] max-w-full flex-col gap-4 rounded-2xl border border-edge bg-panel p-6 shadow-2xl shadow-black/40">
+      <div className="flex w-full max-w-[560px] flex-col gap-4 rounded-2xl border border-edge bg-panel p-4 shadow-2xl shadow-black/40 sm:p-6">
         <div className="flex items-start justify-between gap-3">
           <h3 className="px-2 py-1 font-display text-lg font-bold">⚙ Automatizaciones del tablero</h3>
           <button className={modalClose} onClick={onClose}>✕</button>
@@ -55,8 +55,8 @@ export default function AutomationModal({ boardId, lists, onClose }: {
           <h4 className={sectionTitle}>Reglas activas</h4>
           {rules.length === 0 && <p className="text-[13px] text-dim">Sin reglas todavía.</p>}
           {rules.map((rule) => (
-            <div key={rule.id} className="mb-2 flex items-center gap-2 rounded-lg border border-edge bg-raised px-2.5 py-2 text-[13px]">
-              <span>
+            <div key={rule.id} className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-edge bg-raised px-2.5 py-2 text-[13px]">
+              <span className="min-w-0 flex-1">
                 Cuando una tarjeta llegue a <strong>{rule.list_name}</strong> → {ACTION_LABELS[rule.action] ?? rule.action}
                 {rule.action === 'label' && (
                   <span className="ml-1.5 inline-block h-2 w-6 rounded-full"

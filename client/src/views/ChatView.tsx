@@ -225,14 +225,14 @@ export default function ChatView({ channelId, user, isPremium }: { channelId: nu
   if (!channel) return <div className={emptyState}>Canal no encontrado.</div>;
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-w-0 flex-col">
       <div className={mainHeader}>
-        <h2 className={viewTitle}><span className="text-chat">#</span> {channel.name}</h2>
+        <h2 className={viewTitle + " truncate"}><span className="text-chat">#</span> {channel.name}</h2>
         <span className="text-[13px] text-dim">{messages.length} mensajes</span>
       </div>
 
       {channel.card_id && (
-        <div className="mx-5 mt-3 flex items-center gap-2 rounded-lg border border-board/60 bg-board/10 px-3.5 py-2.5 text-[13px]">
+        <div className="mx-3 mt-3 flex flex-wrap items-center gap-2 sm:mx-5 rounded-lg border border-board/60 bg-board/10 px-3.5 py-2.5 text-[13px]">
           <span className="text-board">▦</span> Este canal discute la tarjeta
           <a href="#" className="text-accent hover:brightness-110" onClick={async (e) => {
             e.preventDefault();
@@ -245,7 +245,7 @@ export default function ChatView({ channelId, user, isPremium }: { channelId: nu
       )}
 
       {pinned.length > 0 && (
-        <div className="mx-5 mt-2.5 cursor-pointer rounded-lg border border-edge bg-panel px-3.5 py-2 text-xs text-dim transition-colors hover:border-chat"
+        <div className="mx-3 mt-2.5 cursor-pointer sm:mx-5 rounded-lg border border-edge bg-panel px-3.5 py-2 text-xs text-dim transition-colors hover:border-chat"
           onClick={() => setShowPinned(!showPinned)}>
           📌 {pinned.length} {pinned.length === 1 ? 'mensaje fijado' : 'mensajes fijados'} {showPinned ? '▲' : '▼'}
           {showPinned && (
@@ -260,9 +260,9 @@ export default function ChatView({ channelId, user, isPremium }: { channelId: nu
         </div>
       )}
 
-      <div className="flex flex-1 overflow-hidden">
-        <div className="flex flex-1 flex-col overflow-hidden">
-          <div className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-5 py-4" ref={scrollRef}>
+      <div className="flex min-w-0 flex-1 overflow-hidden">
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-3 py-3 sm:px-5 sm:py-4" ref={scrollRef}>
             {messages.length === 0 && (
               <div className={`${emptyState} h-auto p-10`}>
                 <p>Todavía no hay mensajes en #{channel.name}. ¡Escribe el primero!</p>
@@ -275,11 +275,11 @@ export default function ChatView({ channelId, user, isPremium }: { channelId: nu
             ))}
           </div>
 
-          <div className="shrink-0 px-5 pb-4.5 pt-3">
-            <form onSubmit={send} className="relative flex gap-2 rounded-xl border border-edge bg-panel p-2 transition-colors focus-within:border-chat">
+          <div className="shrink-0 px-3 pb-3 pt-3 sm:px-5 sm:pb-4.5">
+            <form onSubmit={send} className="relative flex flex-wrap gap-2 rounded-xl border border-edge bg-panel p-2 transition-colors focus-within:border-chat">
               <input value={draft} onChange={(e) => setDraft(e.target.value)}
                 placeholder={`Mensaje para #${channel.name}`} autoFocus
-                className="flex-1 bg-transparent px-2 py-1 outline-none" />
+                className="min-w-40 flex-1 bg-transparent px-2 py-1 outline-none" />
               <button type="button" className="px-2 text-[13px] text-dim transition-colors hover:text-fg"
                 title={isPremium ? 'Programar envío' : 'Programar envío (Premium)'}
                 onClick={() => isPremium ? setShowSchedule(!showSchedule) : notifyPlanBlock('Los mensajes programados son parte de Premium.')}>
@@ -287,7 +287,7 @@ export default function ChatView({ channelId, user, isPremium }: { channelId: nu
               </button>
               <button className={btnSmall} type="submit">Enviar</button>
               {showSchedule && (
-                <div className="absolute bottom-full right-0 z-20 mb-2 flex w-64 flex-col gap-2 rounded-xl border border-edge bg-raised p-3 shadow-xl shadow-black/40">
+                <div className="absolute bottom-full right-0 z-20 mb-2 flex w-[min(16rem,calc(100dvw-2rem))] flex-col gap-2 rounded-xl border border-edge bg-raised p-3 shadow-xl shadow-black/40">
                   <strong className="text-[13px]">⏰ Enviar más tarde</strong>
                   <input type="datetime-local" value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)}
                     className="rounded-lg border border-edge bg-ink px-2.5 py-1.5 text-[13px] outline-none focus:border-accent" />
@@ -323,7 +323,7 @@ export default function ChatView({ channelId, user, isPremium }: { channelId: nu
         </div>
 
         {thread && (
-          <div className="flex w-[360px] shrink-0 flex-col border-l border-edge bg-panel">
+          <div className="fixed inset-x-3 bottom-3 top-16 z-40 flex flex-col rounded-xl border border-edge bg-panel shadow-2xl shadow-black/50 md:static md:inset-auto md:z-auto md:w-[360px] md:shrink-0 md:rounded-none md:border-y-0 md:border-r-0 md:shadow-none">
             <div className="flex items-center justify-between border-b border-edge px-4 py-3 font-display font-bold">
               💬 Hilo
               <button className={modalClose} onClick={() => setThreadId(null)}>✕</button>
@@ -339,10 +339,10 @@ export default function ChatView({ channelId, user, isPremium }: { channelId: nu
                   inThread onReact={react} onPin={pin} onEdit={editMessage} onDelete={deleteMessage} />
               ))}
             </div>
-            <form className="flex gap-1.5 border-t border-edge p-3" onSubmit={sendThreadReply}>
+            <form className="flex flex-wrap gap-1.5 border-t border-edge p-3" onSubmit={sendThreadReply}>
               <input value={threadDraft} onChange={(e) => setThreadDraft(e.target.value)}
                 placeholder="Responder en el hilo…"
-                className="flex-1 rounded-lg border border-edge bg-ink px-2.5 py-2 text-[13px] outline-none transition-colors focus:border-chat" />
+                className="min-w-0 flex-1 rounded-lg border border-edge bg-ink px-2.5 py-2 text-[13px] outline-none transition-colors focus:border-chat" />
               <button className={btnSmall} type="submit">↩</button>
             </form>
           </div>

@@ -24,7 +24,7 @@ const fecha = (iso: string) => {
 
 function StatCard({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="flex min-w-32 flex-col gap-1 rounded-xl border border-edge bg-panel px-4 py-3">
+    <div className="flex min-w-0 flex-col gap-1 rounded-xl border border-edge bg-panel px-4 py-3">
       <span className="font-display text-[22px] font-extrabold">{value}</span>
       <span className="text-[12px] text-dim">{label}</span>
     </div>
@@ -87,7 +87,7 @@ function UsersTab({ onChanged }: { onChanged: () => void }) {
       <div className="flex flex-col gap-1.5">
         {filtered.map((u) => (
           <div key={u.id} className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-edge bg-panel px-3.5 py-2.5 text-[13px]">
-            <div className="flex min-w-44 flex-col">
+            <div className="flex min-w-0 flex-1 basis-44 flex-col">
               <span className="font-semibold">@{u.username}{u.name ? ` · ${u.name}` : ''}</span>
               <span className="text-[11.5px] text-dim">{u.email ?? 'sin email'} · alta {fecha(u.created_at)}</span>
             </div>
@@ -101,7 +101,7 @@ function UsersTab({ onChanged }: { onChanged: () => void }) {
               {!!u.email_verified && badge('✓ VERIFICADO', 'bg-ok/15 text-ok')}
               {u.premium_until && <span className="text-[11.5px] text-dim">vence {fecha(u.premium_until)}</span>}
             </div>
-            <div className="ml-auto flex items-center gap-2.5">
+            <div className="ml-auto flex flex-wrap items-center justify-end gap-2.5">
               <button className={linkBtn} disabled={busy} onClick={() => grantPremium(u)}>+ Premium</button>
               {u.plan !== 'free' && (
                 <button className={linkBtn} disabled={busy} onClick={() => revokePremium(u)}>Quitar plan</button>
@@ -143,7 +143,7 @@ function PaymentsTab() {
             <span className="min-w-36 font-semibold">@{p.username}</span>
             <span className="text-dim">{p.plan === 'team' ? 'Equipos' : 'Individual'} · {p.days} días</span>
             {badge(p.method.toUpperCase(), p.method === 'simulado' ? 'bg-board/15 text-board' : 'bg-ok/15 text-ok')}
-            <strong className="ml-auto">{money(p.amount_cents, p.currency)}</strong>
+            <strong className="sm:ml-auto">{money(p.amount_cents, p.currency)}</strong>
           </div>
         ))}
         {payments.length === 0 && (
@@ -220,7 +220,7 @@ function InvitesTab() {
               {inv.redeemed_by && (
                 <span className="overflow-hidden text-ellipsis whitespace-nowrap text-[12px] text-dim">→ {inv.redeemed_by}</span>
               )}
-              <button className="ml-auto text-xs text-danger opacity-80 transition-opacity hover:opacity-100"
+              <button className="sm:ml-auto text-xs text-danger opacity-80 transition-opacity hover:opacity-100"
                 onClick={() => deleteInvite(inv)}>Eliminar</button>
             </div>
           );
@@ -262,16 +262,16 @@ export default function AdminView() {
     <div className="flex h-full flex-col">
       <div className={mainHeader}>
         <h2 className={viewTitle}><span className="text-accent">⚙</span> Administración</h2>
-        <div className="ml-auto flex overflow-hidden rounded-lg border border-edge bg-panel">
+        <div className="flex max-w-full overflow-x-auto rounded-lg border border-edge bg-panel sm:ml-auto">
           {tabBtn('usuarios', '👤 Usuarios')}
           {tabBtn('pagos', '💳 Pagos')}
           {tabBtn('invitaciones', '🎟 Invitaciones')}
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-5">
+      <div className="min-w-0 flex-1 overflow-y-auto p-3 sm:p-5">
         {stats && (
-          <div className="mb-6 flex flex-wrap gap-3">
+          <div className="mb-6 grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-3">
             <StatCard label="Usuarios" value={stats.users} />
             <StatCard label="Emails verificados" value={stats.verified} />
             <StatCard label="Susc. Individual" value={stats.premium_subs} />

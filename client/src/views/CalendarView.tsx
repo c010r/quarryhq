@@ -44,15 +44,15 @@ export default function CalendarView({ lists, onOpenCard }: {
   const navBtn = 'rounded-lg border border-edge bg-panel px-3 py-1 text-dim transition-colors hover:border-board hover:text-fg';
 
   return (
-    <div className="p-5">
-      <div className="mb-3.5 flex items-center gap-3.5">
+    <div className="min-w-0 p-3 sm:p-5">
+      <div className="mb-3.5 flex flex-wrap items-center gap-2 sm:gap-3.5">
         <button className={navBtn} onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1))}>←</button>
         <h3 className="font-display text-[15px] font-bold capitalize">{monthLabel}</h3>
         <button className={navBtn} onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1))}>→</button>
         <button className={navBtn} onClick={() => { const d = new Date(); setCursor(new Date(d.getFullYear(), d.getMonth(), 1)); }}>Hoy</button>
-        <span className="text-xs text-dim">Las tarjetas aparecen en su fecha de vencimiento</span>
+        <span className="basis-full text-xs text-dim sm:basis-auto">Las tarjetas aparecen en su fecha de vencimiento</span>
       </div>
-      <div className="grid grid-cols-7 gap-1.5">
+      <div className="overflow-x-auto"><div className="grid min-w-[640px] grid-cols-7 gap-1.5">
         {DOW.map((d) => (
           <div key={d} className="p-1 text-center text-[11px] uppercase tracking-wider text-dim">{d}</div>
         ))}
@@ -74,7 +74,7 @@ export default function CalendarView({ lists, onOpenCard }: {
             </div>
           );
         })}
-      </div>
+      </div></div>
     </div>
   );
 }

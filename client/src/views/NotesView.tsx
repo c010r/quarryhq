@@ -50,7 +50,7 @@ function VersionHistory({ noteId, isPremium, onRestore, onClose }: {
   }
 
   return (
-    <div className="fixed inset-y-0 right-0 z-60 flex w-[340px] flex-col border-l border-edge bg-panel shadow-2xl shadow-black/40">
+    <div className="fixed inset-y-0 right-0 z-60 flex w-full max-w-[340px] flex-col border-l border-edge bg-panel shadow-2xl shadow-black/40">
       <div className="flex items-center justify-between border-b border-edge px-4 py-3.5 font-display font-bold">
         🕘 Historial de versiones
         <button className={modalClose} onClick={onClose}>✕</button>
@@ -207,8 +207,8 @@ export default function NotesView({ noteId, notes, onChanged, isPremium }: {
     `px-3 py-1.5 text-xs transition-colors ${active ? 'bg-note/10 font-semibold text-note' : 'text-dim hover:text-fg'}`;
 
   return (
-    <div className="flex h-full">
-      <div className="w-48 shrink-0 overflow-y-auto border-r border-edge p-2.5 lg:w-[250px]">
+    <div className="flex h-full min-w-0 flex-col md:flex-row">
+      <div className="max-h-56 w-full shrink-0 overflow-y-auto border-b border-edge p-2.5 md:max-h-none md:w-48 md:border-b-0 md:border-r lg:w-[250px]">
         <div className={sideHeading}>Acciones</div>
         <button className={sideItem(false, 'note')} onClick={openDailyNote}>
           <span className={sideIcon}>☀</span><span className={sideLabel}>Nota diaria de hoy</span>
@@ -253,7 +253,7 @@ export default function NotesView({ noteId, notes, onChanged, isPremium }: {
       </div>
 
       {detail ? (
-        <div className="flex flex-1 flex-col overflow-hidden">
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <div className="flex shrink-0 flex-wrap items-center gap-x-2.5 gap-y-2 border-b border-edge px-5 py-3">
             <input value={title}
               onChange={(e) => { setTitle(e.target.value); scheduleSave(e.target.value, content); }}
@@ -273,13 +273,13 @@ export default function NotesView({ noteId, notes, onChanged, isPremium }: {
             <button className={btnDanger} onClick={removeNote} title="Eliminar nota">🗑</button>
           </div>
 
-          <div className="flex flex-1 overflow-hidden">
+          <div className="flex min-w-0 flex-1 overflow-hidden">
             {mode === 'edit' ? (
               <textarea value={content} placeholder="Escribe en markdown… usa [[Título]] para enlazar otras notas."
                 onChange={(e) => { setContent(e.target.value); scheduleSave(title, e.target.value); }}
-                className="flex-1 resize-none bg-transparent px-6 py-5 font-mono text-[13.5px] leading-[1.65] outline-none" />
+                className="min-w-0 flex-1 resize-none bg-transparent px-6 py-5 font-mono text-[13.5px] leading-[1.65] outline-none" />
             ) : (
-              <div className="md flex-1 overflow-y-auto px-6 py-5" onClick={onPreviewClick}
+              <div className="md min-w-0 flex-1 overflow-y-auto px-6 py-5" onClick={onPreviewClick}
                 dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }} />
             )}
           </div>

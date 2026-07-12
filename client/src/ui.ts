@@ -49,15 +49,15 @@ export const chipRemove = 'ml-0.5 text-dim transition-colors hover:text-danger';
 
 export const sectionTitle = 'mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-dim';
 export const modalBackdrop =
-  'fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 px-5 py-14 backdrop-blur-[2px]';
+  'fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 px-3 py-5 backdrop-blur-[2px] sm:px-5 sm:py-14';
 export const modalBox =
-  'flex w-[680px] max-w-full flex-col gap-4.5 rounded-2xl border border-edge bg-panel p-6 shadow-2xl shadow-black/40';
+  'flex w-full max-w-[680px] flex-col gap-4.5 rounded-2xl border border-edge bg-panel p-4 shadow-2xl shadow-black/40 sm:p-6';
 export const modalClose = 'px-2 py-0.5 text-lg text-dim transition-colors hover:text-fg';
 
-export const emptyState = 'flex h-full flex-col items-center justify-center gap-2 text-dim';
+export const emptyState = 'flex h-full min-w-0 flex-col items-center justify-center gap-2 px-4 text-center text-dim';
 
-export const viewTitle = 'font-display text-[17px] font-bold';
-export const mainHeader = 'flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-edge px-5 py-3.5';
+export const viewTitle = 'min-w-0 font-display text-[17px] font-bold';
+export const mainHeader = 'flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-edge px-3.5 py-3 sm:px-5 sm:py-3.5';
 
 // Paleta compartida para avatares de usuario (chat y miembros de tarjeta).
 export const AVATAR_COLORS = ['#8b93f8', '#3ecfb2', '#e9a23b', '#f27d98', '#6bb2f2', '#b18cfa'];

@@ -94,13 +94,13 @@ export default function GraphView() {
   return (
     <>
       <div className={mainHeader}>
-        <h2 className={viewTitle}>◉ Grafo de conocimiento</h2>
+        <h2 className={viewTitle + " truncate"}>◉ Grafo de conocimiento</h2>
         <span className="text-[13px] text-dim">
           {data ? `${data.nodes.length} nodos · ${data.edges.length} vínculos` : 'Cargando…'}
         </span>
       </div>
-      <div className="flex-1 overflow-auto">
-        <div className="relative h-full" ref={containerRef}
+      <div className="min-w-0 flex-1 overflow-auto">
+        <div className="relative h-full min-h-[420px] min-w-[640px]" ref={containerRef}
           onMouseMove={onMouseMove}
           onMouseUp={() => (dragRef.current = null)}
           onMouseLeave={() => (dragRef.current = null)}>
@@ -132,7 +132,7 @@ export default function GraphView() {
               </g>
             ))}
           </svg>
-          <div className="absolute right-3.5 top-3.5 flex flex-col gap-1.5 rounded-xl border border-edge bg-panel px-4 py-3 text-xs">
+          <div className="absolute right-2 top-2 sm:right-3.5 sm:top-3.5 flex flex-col gap-1.5 rounded-xl border border-edge bg-panel px-4 py-3 text-xs">
             <div className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-note" /> Notas</div>
             <div className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-board" /> Tarjetas</div>
             <div className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-chat" /> Canales</div>

@@ -136,9 +136,9 @@ export default function BoardView({ boardId, initialCardId, isPremium }: {
   return (
     <>
       <div className={mainHeader}>
-        <h2 className={viewTitle}><span className="text-board">▦</span> {board.name}</h2>
+        <h2 className={viewTitle + " truncate"}><span className="text-board">▦</span> {board.name}</h2>
         <span className="text-[13px] text-dim">{lists.reduce((n, l) => n + l.cards.length, 0)} tarjetas</span>
-        <div className="ml-auto flex overflow-hidden rounded-lg border border-edge bg-panel">
+        <div className="flex max-w-full overflow-x-auto rounded-lg border border-edge bg-panel sm:ml-auto">
           <button className={viewTab(view === 'kanban')} onClick={() => setView('kanban')}>▦ Tablero</button>
           <button className={viewTab(view === 'table')}
             onClick={() => isPremium ? setView('table') : notifyPlanBlock('Las vistas Tabla y Calendario son parte de Premium.')}>
@@ -154,13 +154,13 @@ export default function BoardView({ boardId, initialCardId, isPremium }: {
           ⚙ Automatización{!isPremium && ' 🔒'}
         </button>
       </div>
-      <div className="flex-1 overflow-auto">
+      <div className="min-w-0 flex-1 overflow-auto">
         {view === 'table' && <TableView lists={lists} onOpenCard={setOpenCardId} onChanged={load} />}
         {view === 'calendar' && <CalendarView lists={lists} onOpenCard={setOpenCardId} />}
-        {view === 'kanban' && <div className="flex min-h-full items-start gap-3.5 p-4.5">
+        {view === 'kanban' && <div className="flex min-h-full items-start gap-3 p-3 sm:gap-3.5 sm:p-4.5">
           {lists.map((list) => (
             <div key={list.id}
-              className="flex max-h-[calc(100vh-110px)] w-70 shrink-0 flex-col rounded-xl border border-edge bg-panel"
+              className="flex max-h-[calc(100dvh-120px)] w-[min(17.5rem,calc(100dvw-2rem))] shrink-0 flex-col rounded-xl border border-edge bg-panel md:max-h-[calc(100dvh-110px)]"
               onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => {
                 e.preventDefault();
@@ -215,12 +215,12 @@ export default function BoardView({ boardId, initialCardId, isPremium }: {
             </div>
           ))}
           {addingList ? (
-            <div className="w-70 shrink-0 rounded-xl border border-edge bg-panel pt-2">
+            <div className="w-[min(17.5rem,calc(100dvw-2rem))] shrink-0 rounded-xl border border-edge bg-panel pt-2">
               <AddForm placeholder="Nombre de la lista…" onSubmit={addList} onCancel={() => setAddingList(false)} />
             </div>
           ) : (
             <button
-              className="w-70 shrink-0 rounded-xl border border-dashed border-edge bg-panel/70 p-3.5 text-left text-[13px] text-dim transition-colors hover:border-board hover:text-fg"
+              className="w-[min(17.5rem,calc(100dvw-2rem))] shrink-0 rounded-xl border border-dashed border-edge bg-panel/70 p-3.5 text-left text-[13px] text-dim transition-colors hover:border-board hover:text-fg"
               onClick={() => setAddingList(true)}>+ Añadir lista</button>
           )}
         </div>}

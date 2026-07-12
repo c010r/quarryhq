@@ -41,8 +41,8 @@ export default function TableView({ lists, onOpenCard, onChanged }: {
   const td = 'border-b border-edge px-3 py-2.5 text-[13.5px]';
 
   return (
-    <div className="p-5">
-      <table className="w-full border-collapse">
+    <div className="min-w-0 p-3 sm:p-5">
+      <div className="overflow-x-auto"><table className="min-w-[760px] w-full border-collapse">
         <thead>
           <tr>
             <th className={th} onClick={() => sortBy('completed')}>✓{arrow('completed')}</th>
@@ -78,7 +78,7 @@ export default function TableView({ lists, onOpenCard, onChanged }: {
             );
           })}
         </tbody>
-      </table>
+      </table></div>
       {rows.length === 0 && <div className={`${emptyState} h-48`}>No hay tarjetas en este tablero.</div>}
     </div>
   );

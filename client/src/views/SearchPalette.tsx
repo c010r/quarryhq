@@ -32,15 +32,15 @@ export default function SearchPalette({ onClose }: { onClose: () => void }) {
     : 0;
 
   const group = 'px-2.5 pb-1 pt-2.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-dim';
-  const item = 'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13.5px] transition-colors hover:bg-accent/10';
+  const item = 'flex w-full min-w-0 items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13.5px] transition-colors hover:bg-accent/10';
   const icon = 'w-4.5 shrink-0 text-center';
-  const detail = 'ml-auto shrink-0 text-xs text-dim';
+  const detail = 'ml-auto hidden shrink-0 sm:inline text-xs text-dim';
   const empty = 'p-6 text-center text-[13px] text-dim';
 
   return (
-    <div className="fixed inset-0 z-100 flex justify-center bg-black/70 pt-24 backdrop-blur-[2px]"
+    <div className="fixed inset-0 z-100 flex justify-center bg-black/70 px-3 pt-12 backdrop-blur-[2px] sm:pt-24"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="flex h-fit max-h-[60vh] w-[560px] max-w-[calc(100%-40px)] flex-col overflow-hidden rounded-2xl border border-edge bg-panel shadow-2xl shadow-black/50">
+      <div className="flex h-fit max-h-[60vh] w-full max-w-[560px] flex-col overflow-hidden rounded-2xl border border-edge bg-panel shadow-2xl shadow-black/50">
         <input autoFocus placeholder="Buscar tarjetas, notas, mensajes y canales…"
           value={query} onChange={(e) => setQuery(e.target.value)}
           className="border-b border-edge bg-transparent px-4.5 py-4 text-[15px] outline-none" />

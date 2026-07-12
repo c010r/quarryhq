@@ -151,8 +151,8 @@ function Login({ onAuth }: { onAuth: (user: User) => void }) {
   }
 
   return (
-    <div className="flex h-full items-center justify-center bg-ink [background-image:radial-gradient(ellipse_at_top,#1a1f3a_0%,var(--color-ink)_62%)]">
-      <form onSubmit={submit} className="flex w-[380px] flex-col gap-3.5 rounded-2xl border border-edge bg-panel p-9 shadow-2xl shadow-black/50">
+    <div className="flex min-h-full items-center justify-center overflow-y-auto bg-ink p-4 [background-image:radial-gradient(ellipse_at_top,#1a1f3a_0%,var(--color-ink)_62%)]">
+      <form onSubmit={submit} className="flex w-full max-w-[380px] flex-col gap-3.5 rounded-2xl border border-edge bg-panel p-5 shadow-2xl shadow-black/50 sm:p-9">
         <LinkMark />
         <h1 className="font-display text-[28px] font-extrabold tracking-tight">QuarryHQ</h1>
         <p className="mb-1 text-[13px] leading-relaxed text-dim">
@@ -178,7 +178,7 @@ function Login({ onAuth }: { onAuth: (user: User) => void }) {
         <button className={btnPrimary} disabled={busy}>
           {mode === 'login' ? 'Entrar' : mode === 'register' ? 'Crear cuenta' : 'Enviar enlace'}
         </button>
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <button type="button" className={btnGhost} onClick={() => switchMode(mode === 'login' ? 'register' : 'login')}>
             {mode === 'login' ? '¿No tienes cuenta? Regístrate' : '¿Ya tienes cuenta? Inicia sesión'}
           </button>
@@ -206,12 +206,12 @@ function AdminShell({ user, onLogout }: { user: User; onLogout: () => void }) {
   }
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex items-center gap-3 border-b border-edge bg-panel px-5 py-3">
+    <div className="flex h-full min-w-0 flex-col">
+      <div className="flex flex-wrap items-center gap-3 border-b border-edge bg-panel px-3.5 py-3 sm:px-5">
         <span className="font-display text-[16px] font-bold tracking-tight">
           QuarryHQ <span className="text-accent">Admin</span>
         </span>
-        <span className="ml-auto flex items-center gap-2 text-[13px] text-dim">
+        <span className="ml-auto flex min-w-0 items-center gap-2 text-[13px] text-dim">
           {user.picture && <img src={user.picture} alt="" referrerPolicy="no-referrer" className="h-5 w-5 rounded-full" />}
           {user.name ?? `@${user.username}`}
         </span>
@@ -249,8 +249,8 @@ function ResetPassword({ token, onAuth }: { token: string; onAuth: (user: User) 
   }
 
   return (
-    <div className="flex h-full items-center justify-center bg-ink [background-image:radial-gradient(ellipse_at_top,#1a1f3a_0%,var(--color-ink)_62%)]">
-      <form onSubmit={submit} className="flex w-[380px] flex-col gap-3.5 rounded-2xl border border-edge bg-panel p-9 shadow-2xl shadow-black/50">
+    <div className="flex min-h-full items-center justify-center overflow-y-auto bg-ink p-4 [background-image:radial-gradient(ellipse_at_top,#1a1f3a_0%,var(--color-ink)_62%)]">
+      <form onSubmit={submit} className="flex w-full max-w-[380px] flex-col gap-3.5 rounded-2xl border border-edge bg-panel p-5 shadow-2xl shadow-black/50 sm:p-9">
         <LinkMark />
         <h1 className="font-display text-[22px] font-extrabold tracking-tight">Nueva contraseña</h1>
         <p className="text-[13px] text-dim">Elige una contraseña nueva para tu cuenta. Se cerrarán las sesiones abiertas.</p>
@@ -279,6 +279,7 @@ function Workspace({ user, onLogout, onUserChanged }: {
   const [notes, setNotes] = useState<NoteMeta[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false); // drawer del sidebar en móvil
   // null = modal cerrado; '' = abierto sin mensaje; texto = abierto por un bloqueo
   const [upgradeMsg, setUpgradeMsg] = useState<string | null>(null);
   const isPremium = user.plan === 'premium';
@@ -311,6 +312,9 @@ function Workspace({ user, onLogout, onUserChanged }: {
     });
     return off;
   }, [refreshSidebar]);
+
+  // El drawer móvil se cierra al navegar a cualquier sección
+  useEffect(() => { setMenuOpen(false); }, [route.join('/')]);
 
   // Atajo Ctrl+K para la búsqueda global
   useEffect(() => {
@@ -388,8 +392,18 @@ function Workspace({ user, onLogout, onUserChanged }: {
   );
 
   return (
-    <div className="flex h-full">
-      <nav className="flex w-48 shrink-0 flex-col overflow-y-auto border-r border-edge bg-panel lg:w-60">
+    <div className="flex h-full min-w-0 flex-col md:flex-row">
+      {/* Barra superior solo en móvil: abre el menú lateral */}
+      <div className="flex shrink-0 items-center gap-2.5 border-b border-edge bg-panel px-3.5 py-2.5 md:hidden">
+        <button onClick={() => setMenuOpen(true)} aria-label="Abrir menú"
+          className="rounded-lg border border-edge bg-ink px-2.5 py-1.5 text-[15px] leading-none text-dim">☰</button>
+        <span className="font-display text-[15px] font-bold tracking-tight">QuarryHQ</span>
+        <button onClick={() => setPaletteOpen(true)} aria-label="Buscar"
+          className="ml-auto rounded-lg border border-edge bg-ink px-2.5 py-1.5 text-[13px] text-dim">🔍</button>
+      </div>
+
+      {menuOpen && <div className="fixed inset-0 z-40 bg-black/60 md:hidden" onClick={() => setMenuOpen(false)} />}
+      <nav className={`${menuOpen ? 'flex' : 'hidden'} fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] shrink-0 flex-col overflow-y-auto border-r border-edge bg-panel md:static md:z-auto md:flex md:w-48 lg:w-60`}>
         <div className="flex items-center gap-2 border-b border-edge p-4 font-display text-[17px] font-bold tracking-tight">
           <svg viewBox="0 0 24 24" className="h-6.5 w-6.5" aria-hidden>
             <line x1="5" y1="17" x2="12" y2="6" stroke="var(--color-edge)" strokeWidth="1.5" />
@@ -475,7 +489,7 @@ function Workspace({ user, onLogout, onUserChanged }: {
         </div>
       </nav>
 
-      <main className="flex flex-1 flex-col overflow-hidden">
+      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
         {section === 'board' && param && (
           <BoardView boardId={Number(param)} initialCardId={route[2] === 'card' ? Number(route[3]) : undefined} isPremium={isPremium} />
         )}

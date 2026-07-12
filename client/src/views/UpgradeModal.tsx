@@ -96,7 +96,7 @@ export default function UpgradeModal({ plan, message, onClose, onChanged }: {
 
   return (
     <div className={modalBackdrop} onClick={onClose}>
-      <div className={`${modalBox} w-[760px]`} onClick={(e) => e.stopPropagation()}>
+      <div className={`${modalBox} max-w-[760px]`} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between">
           <h3 className="font-display text-[20px] font-extrabold tracking-tight">
             {effectivePlan === 'premium' ? '★ Tu plan' : 'Pasa a Premium'}
@@ -201,8 +201,8 @@ export default function UpgradeModal({ plan, message, onClose, onChanged }: {
               )}
             </div>
             {me.team.members.length < me.team.max_members && (
-              <form className="mt-2.5 flex gap-2" onSubmit={(e) => { e.preventDefault(); addMember(); }}>
-                <input className={`${inputBase} flex-1 py-1.5 text-[13px]`} placeholder="Username del miembro…"
+              <form className="mt-2.5 flex flex-wrap gap-2" onSubmit={(e) => { e.preventDefault(); addMember(); }}>
+                <input className={`${inputBase} min-w-0 flex-1 py-1.5 text-[13px]`} placeholder="Username del miembro…"
                   value={memberName} onChange={(e) => setMemberName(e.target.value)} />
                 <button className={btnSmall} disabled={busy || !memberName.trim()}>Invitar</button>
               </form>
@@ -211,10 +211,10 @@ export default function UpgradeModal({ plan, message, onClose, onChanged }: {
         )}
 
         {subscription === 'none' && (
-          <form className="flex items-center gap-2 rounded-xl border border-dashed border-edge px-4 py-3"
+          <form className="flex flex-wrap items-center gap-2 rounded-xl border border-dashed border-edge px-4 py-3"
             onSubmit={(e) => { e.preventDefault(); redeem(); }}>
             <span className="text-[13px] text-dim">🎟 ¿Tienes un código de invitación?</span>
-            <input className={`${inputBase} flex-1 py-1.5 font-mono text-[13px] uppercase`} placeholder="QHQ-XXXX-XXXX"
+            <input className={`${inputBase} min-w-0 flex-1 py-1.5 font-mono text-[13px] uppercase`} placeholder="QHQ-XXXX-XXXX"
               value={redeemCode} onChange={(e) => setRedeemCode(e.target.value.toUpperCase())} />
             <button className={btnSmall} disabled={busy || !redeemCode.trim()}>Canjear</button>
           </form>
