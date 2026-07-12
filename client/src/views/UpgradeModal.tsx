@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { del, get, post } from '../api';
 import type { Plan, PlanLimits, PlanUsage, TeamInfo, User } from '../types';
 import { btnGhost, btnSmall, inputBase, modalBackdrop, modalBox, modalClose } from '../ui';
+import { alertDialog, confirmDialog } from '../dialog';
 
 const FREE_FEATURES = [
   '2 tableros · 50 tarjetas c/u',
@@ -64,13 +65,13 @@ export default function UpgradeModal({ plan, message, onClose, onChanged }: {
       await reload();
       onChanged();
     } catch (err: any) {
-      alert(err.message);
+      alertDialog(err.message);
     } finally { setBusy(false); }
   }
 
   const upgrade = (tier: 'premium' | 'team') => act(() => post('/api/billing/upgrade', { plan: tier }));
-  const cancelSub = () => {
-    if (!confirm('¿Cancelar la suscripción? Volverás al plan Free al instante.')) return;
+  const cancelSub = async () => {
+    if (!await confirmDialog('¿Cancelar la suscripción? Volverás al plan Free al instante.', { danger: true, confirmText: 'Sí, cancelar', cancelText: 'Volver' })) return;
     act(() => post('/api/billing/cancel'));
   };
   const addMember = () => {
@@ -86,7 +87,7 @@ export default function UpgradeModal({ plan, message, onClose, onChanged }: {
     act(async () => {
       const { days } = await post<{ days: number }>('/api/invites/redeem', { code });
       setRedeemCode('');
-      alert(`¡Código canjeado! Tienes ${days} días de Premium.`);
+      alertDialog(`¡Código canjeado! Tienes ${days} días de Premium.`);
     });
   };
 

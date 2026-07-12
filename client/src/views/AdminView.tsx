@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { del, get, post } from '../api';
 import type { AdminPayment, AdminUser, InviteCode } from '../types';
 import { btnSmall, emptyState, mainHeader, viewTitle } from '../ui';
+import { alertDialog, confirmDialog } from '../dialog';
 
 interface AdminStats {
   users: number;
@@ -51,7 +52,7 @@ function UsersTab({ onChanged }: { onChanged: () => void }) {
       await reload();
       onChanged();
     } catch (err: any) {
-      alert(err.message);
+      alertDialog(err.message);
     } finally { setBusy(false); }
   }
 
@@ -60,16 +61,16 @@ function UsersTab({ onChanged }: { onChanged: () => void }) {
     if (!days) return;
     act(() => post(`/api/admin/users/${u.id}/premium`, { days: Number(days) }));
   };
-  const revokePremium = (u: AdminUser) => {
-    if (!confirm(`¿Quitar el plan de pago de @${u.username}? Vuelve a Free al instante.`)) return;
+  const revokePremium = async (u: AdminUser) => {
+    if (!await confirmDialog(`¿Quitar el plan de pago de @${u.username}? Vuelve a Free al instante.`, { danger: true, confirmText: 'Quitar plan' })) return;
     act(() => del(`/api/admin/users/${u.id}/premium`));
   };
-  const toggleAdmin = (u: AdminUser) => {
-    if (!confirm(u.is_admin ? `¿Quitar permisos de administración a @${u.username}?` : `¿Hacer administrador a @${u.username}? Podrá entrar a este backend.`)) return;
+  const toggleAdmin = async (u: AdminUser) => {
+    if (!await confirmDialog(u.is_admin ? `¿Quitar permisos de administración a @${u.username}?` : `¿Hacer administrador a @${u.username}? Podrá entrar a este backend.`, { confirmText: u.is_admin ? 'Quitar permisos' : 'Hacer admin' })) return;
     act(() => post(`/api/admin/users/${u.id}/toggle-admin`));
   };
-  const removeUser = (u: AdminUser) => {
-    if (!confirm(`¿ELIMINAR la cuenta @${u.username}? Se borran sus mensajes, sesiones y asientos de equipo. Esta acción no tiene vuelta atrás.`)) return;
+  const removeUser = async (u: AdminUser) => {
+    if (!await confirmDialog(`¿ELIMINAR la cuenta @${u.username}? Se borran sus mensajes, sesiones y asientos de equipo. Esta acción no tiene vuelta atrás.`, { danger: true, confirmText: 'Eliminar cuenta' })) return;
     act(() => del(`/api/admin/users/${u.id}`));
   };
 
@@ -173,12 +174,12 @@ function InvitesTab() {
       await post('/api/invites', { trial_days: Number(days) || 14, max_uses: Number(uses) || 1 });
       await reload();
     } catch (err: any) {
-      alert(err.message);
+      alertDialog(err.message);
     } finally { setBusy(false); }
   }
 
   async function deleteInvite(invite: InviteCode) {
-    if (!confirm(`¿Eliminar el código ${invite.code}? Nadie más podrá canjearlo.`)) return;
+    if (!await confirmDialog(`¿Eliminar el código ${invite.code}? Nadie más podrá canjearlo.`, { danger: true, confirmText: 'Eliminar' })) return;
     await del(`/api/invites/${invite.id}`);
     reload();
   }

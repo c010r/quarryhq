@@ -33,6 +33,8 @@ export const btnSmall =
   'rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-ink transition hover:brightness-110 disabled:opacity-50';
 export const btnGhost = 'text-xs text-dim transition-colors hover:text-fg';
 export const btnDanger = 'text-xs text-danger opacity-80 transition-opacity hover:opacity-100';
+export const btnDangerSolid =
+  'rounded-lg bg-danger px-3.5 py-2 text-sm font-semibold text-ink transition hover:brightness-110 disabled:opacity-50';
 export const headerBtn =
   'rounded-lg border border-edge bg-panel px-3 py-1.5 text-xs text-dim transition-colors hover:border-accent hover:text-fg';
 

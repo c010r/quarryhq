@@ -4,6 +4,7 @@ import type { Backlink, Card, Channel, ChecklistItem, LinkedNote, NoteMeta, User
 import { LABEL_COLORS } from '../types';
 import { navigate } from '../App';
 import { btnDanger, btnGhost, btnSmall, chip, chipAdd, chipRemove, inputBase, modalBackdrop, modalBox, modalClose, sectionTitle, selectBase } from '../ui';
+import { confirmDialog } from '../dialog';
 
 interface CardDetail {
   card: Card;
@@ -99,7 +100,7 @@ export default function CardModal({ cardId, onClose }: { cardId: number; onClose
   }
 
   async function removeCard() {
-    if (!confirm('¿Eliminar esta tarjeta?')) return;
+    if (!await confirmDialog('¿Eliminar esta tarjeta?', { danger: true, confirmText: 'Eliminar' })) return;
     await del(`/api/cards/${cardId}`);
     onClose();
   }
