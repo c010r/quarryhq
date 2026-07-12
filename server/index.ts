@@ -493,7 +493,7 @@ app.post('/api/auth/google', h(async (req, res) => {
 
 app.get('/api/me', requireAuth, h(async (req: AuthedRequest, res) => {
   const plan = await userPlan(req.userId!); // primero: degrada suscripciones vencidas
-  const row = await get('SELECT id, username, name, picture, plan, premium_until, is_admin, email, email_verified FROM users WHERE id = $1', [req.userId!]);
+  const row = await get('SELECT id, username, name, picture, plan, premium_until, is_admin, email, email_verified, theme_preset, theme_accent, theme_bg FROM users WHERE id = $1', [req.userId!]);
 
   // Información de equipo: titular ve sus miembros; un miembro ve a su titular
   let team: unknown = null;
@@ -528,6 +528,24 @@ app.get('/api/me', requireAuth, h(async (req: AuthedRequest, res) => {
     limits: plan === 'free' ? FREE_LIMITS : null,
     usage: { boards: boards?.n ?? 0, notes: notes?.n ?? 0, channels: channels?.n ?? 0 },
   });
+}));
+
+// ---------- Estética del escritorio (exclusivo Premium) ----------
+// Se valida contra listas fijas + un formato de color/URL estricto: nada de
+// lo que llega en el body se interpola directo en HTML/CSS sin chequear.
+const THEME_PRESETS = ['default', 'ocean', 'sunset', 'forest', 'rose', 'custom'];
+const BG_PRESETS = ['default', 'aurora', 'nebula', 'sunrise', 'mono'];
+const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+
+app.patch('/api/me/theme', requireAuth, requirePremium, h(async (req: AuthedRequest, res) => {
+  const preset = THEME_PRESETS.includes(req.body?.preset) ? req.body.preset : 'default';
+  const accent = preset === 'custom' && HEX_COLOR_RE.test(req.body?.accent ?? '') ? req.body.accent : null;
+  const rawBg = String(req.body?.bg ?? 'default').trim();
+  const bg = rawBg.startsWith('https://') && rawBg.length <= 600 ? rawBg
+    : (BG_PRESETS.includes(rawBg) ? rawBg : 'default');
+  await run('UPDATE users SET theme_preset = $1, theme_accent = $2, theme_bg = $3 WHERE id = $4',
+    [preset, accent, bg, req.userId!]);
+  res.json({ ok: true, theme_preset: preset, theme_accent: accent, theme_bg: bg });
 }));
 
 // ---------- Facturación (simulada) ----------

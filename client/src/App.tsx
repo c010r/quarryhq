@@ -7,9 +7,11 @@ import ChatView from './views/ChatView';
 import GraphView from './views/GraphView';
 import SearchPalette from './views/SearchPalette';
 import UpgradeModal from './views/UpgradeModal';
+import AppearanceModal from './views/AppearanceModal';
 import AdminView from './views/AdminView';
 import { btnPrimary, btnGhost, emptyState, inputBase, sideHeading, sideIcon, sideItem, sideLabel } from './ui';
 import { alertDialog } from './dialog';
+import { applyTheme } from './theme';
 
 function useHashRoute(): string[] {
   const [hash, setHash] = useState(location.hash);
@@ -283,6 +285,7 @@ function Workspace({ user, onLogout, onUserChanged }: {
   const [menuOpen, setMenuOpen] = useState(false); // drawer del sidebar en móvil
   // null = modal cerrado; '' = abierto sin mensaje; texto = abierto por un bloqueo
   const [upgradeMsg, setUpgradeMsg] = useState<string | null>(null);
+  const [showAppearance, setShowAppearance] = useState(false);
   const isPremium = user.plan === 'premium';
 
   // Cualquier 403 de plan (premium_required / limit_reached) abre el modal
@@ -469,6 +472,11 @@ function Workspace({ user, onLogout, onUserChanged }: {
 
         <div className="mt-auto">
           <div className="px-3 pb-1">
+            <button
+              className="mb-1.5 flex w-full items-center justify-center gap-1.5 rounded-lg border border-edge bg-panel px-3 py-1.5 text-[12px] text-dim transition-colors hover:border-accent hover:text-fg"
+              onClick={() => setShowAppearance(true)}>
+              🎨 Apariencia{!isPremium && ' 🔒'}
+            </button>
             {isPremium ? (
               <button
                 className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-3 py-1.5 text-[12px] font-semibold text-accent transition hover:bg-accent/15"
@@ -517,6 +525,11 @@ function Workspace({ user, onLogout, onUserChanged }: {
           onClose={() => setUpgradeMsg(null)}
           onChanged={onUserChanged} />
       )}
+      {showAppearance && (
+        <AppearanceModal user={user} isPremium={isPremium}
+          onChanged={onUserChanged}
+          onClose={() => setShowAppearance(false)} />
+      )}
     </div>
   );
 }
@@ -541,6 +554,10 @@ export default function App() {
   // Tras autenticarse se refresca el perfil completo (la respuesta del login
   // no trae is_admin ni la suscripción)
   const onAuth = (u: User) => { setUser(u); refreshUser(); };
+
+  // Estética Premium: se re-aplica cada vez que cambia el usuario (login,
+  // logout, o tras guardar un cambio de tema en AppearanceModal)
+  useEffect(() => { applyTheme(user); }, [user]);
 
   if (loading) return <div className={`${emptyState} h-screen`}>Cargando…</div>;
   const resetMatch = location.hash.match(/^#\/reset\/([a-f0-9]{64})$/);

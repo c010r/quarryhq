@@ -29,6 +29,12 @@
   html, body, #root { height: 100%; }
   body {
     @apply overflow-hidden bg-ink font-sans text-sm text-fg antialiased;
+    /* Fondo de escritorio Premium: theme.ts pisa --bg-image en :root */
+    background-image: var(--bg-image, none);
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-attachment: fixed;
   }
   button { font: inherit; color: inherit; cursor: pointer; }
   input, textarea, select { font: inherit; color: var(--color-fg); }

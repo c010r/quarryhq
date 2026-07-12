@@ -265,6 +265,11 @@ export async function initSchema() {
     ALTER TABLE users ADD COLUMN IF NOT EXISTS premium_until TEXT;
     -- Admin: puede generar y gestionar códigos de invitación
     ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin INTEGER NOT NULL DEFAULT 0;
+    -- Estética del escritorio (exclusivo Premium): paleta de color y fondo.
+    -- Se guarda aunque el usuario baje a Free; solo se APLICA si plan = premium.
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS theme_preset TEXT NOT NULL DEFAULT 'default';
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS theme_accent TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS theme_bg TEXT;
     -- Registro con email: verificación y unicidad (case-insensitive)
     ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE sessions ADD COLUMN IF NOT EXISTS expires_at TEXT;

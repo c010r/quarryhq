@@ -8,6 +8,9 @@ export interface User {
   is_admin?: number;              // puede gestionar códigos de invitación
   email?: string | null;
   email_verified?: number;
+  theme_preset?: string;         // paleta de color (exclusivo Premium)
+  theme_accent?: string | null;  // acento personalizado en hex, solo si theme_preset === 'custom'
+  theme_bg?: string | null;      // clave de fondo predefinido o URL https propia
 }
 export interface InviteCode {
   id: number; code: string; trial_days: number; max_uses: number; used_count: number;
