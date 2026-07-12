@@ -9,6 +9,7 @@ import SearchPalette from './views/SearchPalette';
 import UpgradeModal from './views/UpgradeModal';
 import AdminView from './views/AdminView';
 import { btnPrimary, btnGhost, emptyState, inputBase, sideHeading, sideIcon, sideItem, sideLabel } from './ui';
+import { alertDialog } from './dialog';
 
 function useHashRoute(): string[] {
   const [hash, setHash] = useState(location.hash);
@@ -350,7 +351,7 @@ function Workspace({ user, onLogout, onUserChanged }: {
       await refreshSidebar();
       navigate(`/board/${board.id}`);
     } catch (err: any) {
-      if (!isPlanError(err)) alert(err.message); // los errores de plan abren el modal solos
+      if (!isPlanError(err)) alertDialog(err.message); // los errores de plan abren el modal solos
     }
   }
 
@@ -362,7 +363,7 @@ function Workspace({ user, onLogout, onUserChanged }: {
       await refreshSidebar();
       navigate(`/notes/${note.id}`);
     } catch (err: any) {
-      if (!isPlanError(err)) alert(err.message);
+      if (!isPlanError(err)) alertDialog(err.message);
     }
   }
 
@@ -374,7 +375,7 @@ function Workspace({ user, onLogout, onUserChanged }: {
       await refreshSidebar();
       navigate(`/chat/${channel.id}`);
     } catch (err: any) {
-      if (!isPlanError(err)) alert(err.message);
+      if (!isPlanError(err)) alertDialog(err.message);
     }
   }
 
@@ -428,6 +429,7 @@ function Workspace({ user, onLogout, onUserChanged }: {
             <button key={b.id} className={sideItem(section === 'board' && Number(param) === b.id, 'board')}
               onClick={() => navigate(`/board/${b.id}`)}>
               <span className={`${sideIcon} text-board`}>▦</span><span className={sideLabel}>{b.name}</span>
+              {b.shared && <span className="shrink-0 text-[11px] text-dim" title={`Compartido por @${b.owner_username}`}>🤝</span>}
             </button>
           ))}
         </div>
@@ -438,6 +440,7 @@ function Workspace({ user, onLogout, onUserChanged }: {
             <button key={n.id} className={sideItem(section === 'notes' && Number(param) === n.id, 'note')}
               onClick={() => navigate(`/notes/${n.id}`)}>
               <span className={`${sideIcon} text-note`}>◆</span><span className={sideLabel}>{n.title}</span>
+              {n.shared && <span className="shrink-0 text-[11px] text-dim" title={`Compartida por @${n.owner_username}`}>🤝</span>}
             </button>
           ))}
           {notes.length > 8 && (
@@ -453,6 +456,7 @@ function Workspace({ user, onLogout, onUserChanged }: {
             <button key={c.id} className={sideItem(section === 'chat' && Number(param) === c.id, 'chat')}
               onClick={() => navigate(`/chat/${c.id}`)}>
               <span className={`${sideIcon} text-chat`}>#</span><span className={sideLabel}>{c.name}</span>
+              {c.shared && <span className="shrink-0 text-[11px] text-dim" title={`Compartido por @${c.owner_username}`}>🤝</span>}
             </button>
           ))}
         </div>
@@ -491,10 +495,10 @@ function Workspace({ user, onLogout, onUserChanged }: {
 
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
         {section === 'board' && param && (
-          <BoardView boardId={Number(param)} initialCardId={route[2] === 'card' ? Number(route[3]) : undefined} isPremium={isPremium} />
+          <BoardView boardId={Number(param)} initialCardId={route[2] === 'card' ? Number(route[3]) : undefined} isPremium={isPremium} currentUserId={user.id} />
         )}
         {section === 'notes' && (
-          <NotesView noteId={param ? Number(param) : notes[0]?.id} notes={notes} onChanged={refreshSidebar} isPremium={isPremium} />
+          <NotesView noteId={param ? Number(param) : notes[0]?.id} notes={notes} onChanged={refreshSidebar} isPremium={isPremium} currentUserId={user.id} />
         )}
         {section === 'chat' && param && <ChatView channelId={Number(param)} user={user} isPremium={isPremium} />}
         {section === 'graph' && <GraphView />}

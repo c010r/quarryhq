@@ -3,7 +3,9 @@ import { get, post, patch, del, onWsEvent, notifyPlanBlock } from '../api';
 import type { Channel, Message, Reaction, ScheduledMessage, User } from '../types';
 import { renderInlineMarkdown } from '../markdown';
 import { navigate } from '../App';
-import { avatarColor, btnSmall, emptyState, mainHeader, modalClose, viewTitle } from '../ui';
+import { avatarColor, btnSmall, headerBtn, emptyState, mainHeader, modalClose, viewTitle } from '../ui';
+import { alertDialog, confirmDialog } from '../dialog';
+import ShareModal from './ShareModal';
 
 const QUICK_EMOJIS = ['👍', '❤️', '✅', '🎉', '👀'];
 
@@ -116,6 +118,7 @@ export default function ChatView({ channelId, user, isPremium }: { channelId: nu
   const [scheduleAt, setScheduleAt] = useState('');
   const [scheduled, setScheduled] = useState<ScheduledMessage[]>([]);
   const [showScheduled, setShowScheduled] = useState(false);
+  const [showShare, setShowShare] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
@@ -178,7 +181,7 @@ export default function ChatView({ channelId, user, isPremium }: { channelId: nu
       const { message } = await post<{ message: Message }>(`/api/channels/${channelId}/messages`, { content });
       setMessages((prev) => prev.some((m) => m.id === message.id) ? prev : [...prev, message]);
     } catch (err: any) {
-      alert(err.message);
+      alertDialog(err.message);
       setDraft(content);
     }
   }
@@ -202,7 +205,7 @@ export default function ChatView({ channelId, user, isPremium }: { channelId: nu
       setShowSchedule(false);
       setScheduleAt('');
       loadScheduled();
-    } catch (err: any) { alert(err.message); }
+    } catch (err: any) { alertDialog(err.message); }
   }
 
   async function cancelScheduled(id: number) {
@@ -214,7 +217,7 @@ export default function ChatView({ channelId, user, isPremium }: { channelId: nu
   const pin = (id: number) => post(`/api/messages/${id}/pin`).then(load);
   const editMessage = async (id: number, content: string) => { await patch(`/api/messages/${id}`, { content }); load(); };
   const deleteMessage = async (id: number) => {
-    if (!confirm('¿Eliminar este mensaje?')) return;
+    if (!await confirmDialog('¿Eliminar este mensaje?', { danger: true, confirmText: 'Eliminar' })) return;
     await del(`/api/messages/${id}`);
     if (threadId === id) setThreadId(null);
     load();
@@ -229,6 +232,7 @@ export default function ChatView({ channelId, user, isPremium }: { channelId: nu
       <div className={mainHeader}>
         <h2 className={viewTitle + " truncate"}><span className="text-chat">#</span> {channel.name}</h2>
         <span className="text-[13px] text-dim">{messages.length} mensajes</span>
+        <button className={`${headerBtn} sm:ml-auto`} onClick={() => setShowShare(true)}>🤝 Compartir</button>
       </div>
 
       {channel.card_id && (
@@ -348,6 +352,9 @@ export default function ChatView({ channelId, user, isPremium }: { channelId: nu
           </div>
         )}
       </div>
+      {showShare && (
+        <ShareModal type="channel" resourceId={channelId} resourceName={channel.name} currentUserId={user.id} onClose={() => setShowShare(false)} />
+      )}
     </div>
   );
 }

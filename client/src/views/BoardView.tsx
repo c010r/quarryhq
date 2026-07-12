@@ -6,7 +6,9 @@ import CardModal from './CardModal';
 import TableView from './TableView';
 import CalendarView from './CalendarView';
 import AutomationModal from './AutomationModal';
+import ShareModal from './ShareModal';
 import { avatarColor, btnGhost, btnSmall, emptyState, headerBtn, mainHeader, viewTitle } from '../ui';
+import { confirmDialog } from '../dialog';
 
 function CardBadges({ card }: { card: Card }) {
   const members = (card.member_names ?? '').split(',').filter(Boolean);
@@ -76,10 +78,11 @@ function DropZone({ active, over, onDrop, onDragOver, onDragLeave }: {
   );
 }
 
-export default function BoardView({ boardId, initialCardId, isPremium }: {
+export default function BoardView({ boardId, initialCardId, isPremium, currentUserId }: {
   boardId: number;
   initialCardId?: number;
   isPremium: boolean;
+  currentUserId: number;
 }) {
   const [board, setBoard] = useState<Board | null>(null);
   const [lists, setLists] = useState<List[]>([]);
@@ -90,6 +93,7 @@ export default function BoardView({ boardId, initialCardId, isPremium }: {
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [view, setView] = useState<'kanban' | 'table' | 'calendar'>('kanban');
   const [showRules, setShowRules] = useState(false);
+  const [showShare, setShowShare] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -123,7 +127,7 @@ export default function BoardView({ boardId, initialCardId, isPremium }: {
   }
 
   async function removeList(list: List) {
-    if (!confirm(`¿Eliminar la lista "${list.name}" y sus ${list.cards.length} tarjetas?`)) return;
+    if (!await confirmDialog(`¿Eliminar la lista "${list.name}" y sus ${list.cards.length} tarjetas?`, { danger: true, confirmText: 'Eliminar' })) return;
     await del(`/api/lists/${list.id}`);
     load();
   }
@@ -153,6 +157,7 @@ export default function BoardView({ boardId, initialCardId, isPremium }: {
           onClick={() => isPremium ? setShowRules(true) : notifyPlanBlock('Las automatizaciones estilo Butler son parte de Premium.')}>
           ⚙ Automatización{!isPremium && ' 🔒'}
         </button>
+        <button className={headerBtn} onClick={() => setShowShare(true)}>🤝 Compartir</button>
       </div>
       <div className="min-w-0 flex-1 overflow-auto">
         {view === 'table' && <TableView lists={lists} onOpenCard={setOpenCardId} onChanged={load} />}
@@ -229,6 +234,9 @@ export default function BoardView({ boardId, initialCardId, isPremium }: {
         <CardModal cardId={openCardId} onClose={() => { setOpenCardId(null); load(); }} />
       )}
       {showRules && <AutomationModal boardId={boardId} lists={lists} onClose={() => setShowRules(false)} />}
+      {showShare && (
+        <ShareModal type="board" resourceId={boardId} resourceName={board.name} currentUserId={currentUserId} onClose={() => setShowShare(false)} />
+      )}
     </>
   );
 }

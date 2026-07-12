@@ -4,6 +4,8 @@ import type { Backlink, Note, NoteMeta, NoteVersion, TagCount, Template } from '
 import { renderMarkdown } from '../markdown';
 import { navigate } from '../App';
 import { btnDanger, chip, emptyState, headerBtn, modalClose, sectionTitle, sideHeading, sideIcon, sideItem, sideLabel } from '../ui';
+import { alertDialog, confirmDialog } from '../dialog';
+import ShareModal from './ShareModal';
 
 interface NoteDetail {
   note: Note;
@@ -43,7 +45,7 @@ function VersionHistory({ noteId, isPremium, onRestore, onClose }: {
       notifyPlanBlock('Restaurar versiones anteriores es parte de Premium.');
       return;
     }
-    if (!confirm('¿Restaurar esta versión? El estado actual se guardará en el historial.')) return;
+    if (!await confirmDialog('¿Restaurar esta versión? El estado actual se guardará en el historial.', { confirmText: 'Restaurar' })) return;
     await post(`/api/notes/${noteId}/restore`, { version_id: versionId });
     onRestore();
     onClose();
@@ -84,11 +86,12 @@ function VersionHistory({ noteId, isPremium, onRestore, onClose }: {
   );
 }
 
-export default function NotesView({ noteId, notes, onChanged, isPremium }: {
+export default function NotesView({ noteId, notes, onChanged, isPremium, currentUserId }: {
   noteId?: number;
   notes: NoteMeta[];
   onChanged: () => void;
   isPremium: boolean;
+  currentUserId: number;
 }) {
   const [detail, setDetail] = useState<NoteDetail | null>(null);
   const [title, setTitle] = useState('');
@@ -103,6 +106,7 @@ export default function NotesView({ noteId, notes, onChanged, isPremium }: {
   const [filteredNotes, setFilteredNotes] = useState<NoteMeta[] | null>(null);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [showTemplates, setShowTemplates] = useState(false);
+  const [showShare, setShowShare] = useState(false);
 
   const loadTags = useCallback(() => {
     get<{ tags: TagCount[] }>('/api/tags').then((d) => setTags(d.tags));
@@ -140,8 +144,8 @@ export default function NotesView({ noteId, notes, onChanged, isPremium }: {
     if (!name?.trim()) return;
     try {
       await post('/api/templates', { name, content: content });
-      alert(`Plantilla "${name}" guardada.`);
-    } catch (err: any) { alert(err.message); }
+      alertDialog(`Plantilla "${name}" guardada.`);
+    } catch (err: any) { alertDialog(err.message); }
   }
 
   async function openDailyNote() {
@@ -187,7 +191,7 @@ export default function NotesView({ noteId, notes, onChanged, isPremium }: {
   }
 
   async function removeNote() {
-    if (!detail || !confirm(`¿Eliminar la nota "${detail.note.title}"?`)) return;
+    if (!detail || !await confirmDialog(`¿Eliminar la nota "${detail.note.title}"?`, { danger: true, confirmText: 'Eliminar' })) return;
     await del(`/api/notes/${detail.note.id}`);
     onChanged();
     navigate('/notes');
@@ -247,6 +251,7 @@ export default function NotesView({ noteId, notes, onChanged, isPremium }: {
           <button key={n.id} className={sideItem(detail?.note.id === n.id, 'note')}
             onClick={() => navigate(`/notes/${n.id}`)}>
             <span className={`${sideIcon} text-note`}>◆</span><span className={sideLabel}>{n.title}</span>
+            {n.shared && <span className="shrink-0 text-[11px] text-dim" title={`Compartida por @${n.owner_username}`}>🤝</span>}
           </button>
         ))}
         {(filteredNotes ?? notes).length === 0 && <div className="p-6 text-center text-[13px] text-dim">Sin notas.</div>}
@@ -270,6 +275,7 @@ export default function NotesView({ noteId, notes, onChanged, isPremium }: {
               title={isPremium ? 'Guardar como plantilla' : 'Guardar como plantilla (Premium)'}>
               📄{!isPremium && '🔒'}
             </button>
+            <button className={headerBtn} onClick={() => setShowShare(true)} title="Compartir nota">🤝</button>
             <button className={btnDanger} onClick={removeNote} title="Eliminar nota">🗑</button>
           </div>
 
@@ -293,7 +299,7 @@ export default function NotesView({ noteId, notes, onChanged, isPremium }: {
                     {detail.backlinks.map((b, i) => (
                       <span key={i} className={chip} onClick={() => {
                         if (b.source_type === 'note') navigate(`/notes/${b.source_id}`);
-                        else if (b.source_type === 'card') alert(`Vinculada desde la tarjeta: ${b.label}`);
+                        else if (b.source_type === 'card') alertDialog(`Vinculada desde la tarjeta: ${b.label}`);
                         else if (b.source_type === 'message' && b.channel_id) navigate(`/chat/${b.channel_id}`);
                       }}>
                         <span className={b.source_type === 'note' ? 'text-note' : b.source_type === 'card' ? 'text-board' : 'text-chat'}>
@@ -330,6 +336,10 @@ export default function NotesView({ noteId, notes, onChanged, isPremium }: {
         <VersionHistory noteId={detail.note.id} isPremium={isPremium}
           onRestore={() => load(detail.note.id)}
           onClose={() => setShowHistory(false)} />
+      )}
+      {showShare && detail && (
+        <ShareModal type="note" resourceId={detail.note.id} resourceName={detail.note.title}
+          currentUserId={currentUserId} onClose={() => setShowShare(false)} />
       )}
     </div>
   );

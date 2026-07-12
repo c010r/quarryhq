@@ -239,6 +239,20 @@ export async function initSchema() {
       send_at TEXT NOT NULL
     );
 
+    -- Colaboración: comparte un tablero/nota/canal con otro usuario. Sin FK a
+    -- boards/notes/channels porque resource_id es polimórfico (mismo patrón
+    -- que la tabla links de arriba).
+    CREATE TABLE IF NOT EXISTS resource_shares (
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      resource_type TEXT NOT NULL,
+      resource_id INTEGER NOT NULL,
+      owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL DEFAULT ${NOW_UTC}
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS resource_shares_unique_idx ON resource_shares(resource_type, resource_id, user_id);
+    CREATE INDEX IF NOT EXISTS resource_shares_user_idx ON resource_shares(user_id);
+
     -- Migración para bases anteriores a Google Sign-In (CREATE TABLE IF NOT
     -- EXISTS no altera tablas ya existentes)
     ALTER TABLE users ADD COLUMN IF NOT EXISTS google_sub TEXT;

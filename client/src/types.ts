@@ -30,7 +30,7 @@ export type TeamInfo =
   | { role: 'owner'; members: { id: number; username: string }[]; max_members: number }
   | { role: 'member'; owner: string }
   | null;
-export interface Board { id: number; name: string }
+export interface Board { id: number; name: string; owner_id?: number; shared?: boolean; owner_username?: string | null }
 export interface List { id: number; board_id: number; name: string; position: number; cards: Card[] }
 export interface Card {
   id: number; list_id: number; title: string; description: string;
@@ -45,9 +45,13 @@ export interface Template { id: number; name: string; content: string }
 export interface TagCount { tag: string; count: number }
 export interface Reaction { message_id: number; emoji: string; count: number; mine: number }
 export interface ScheduledMessage { id: number; content: string; send_at: string }
-export interface Note { id: number; title: string; content: string; updated_at: string }
-export interface NoteMeta { id: number; title: string; updated_at: string }
-export interface Channel { id: number; name: string; card_id?: number | null; card_title?: string | null }
+export interface Note { id: number; title: string; content: string; updated_at: string; owner_id?: number }
+export interface NoteMeta { id: number; title: string; updated_at: string; shared?: boolean; owner_username?: string | null }
+export interface Channel {
+  id: number; name: string; card_id?: number | null; card_title?: string | null;
+  owner_id?: number; shared?: boolean; owner_username?: string | null;
+}
+export interface Collaborator { id: number; username: string }
 export interface Message {
   id: number; channel_id: number; user_id: number; content: string; created_at: string; username: string;
   parent_id?: number | null; edited_at?: string | null; pinned?: number; reply_count?: number;
