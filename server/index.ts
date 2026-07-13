@@ -4,7 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import { all, get, run, insert, transaction, initSchema, seedIfEmpty } from './db.ts';
-import { APP_URL, resetPasswordHtml, sendMail, verifyEmailHtml } from './mailer.ts';
+import { APP_URL, inviteHtml, resetPasswordHtml, sendMail, verifyEmailHtml } from './mailer.ts';
 
 const app = express();
 app.set('trust proxy', 1); // nginx delante: req.ip sale de X-Forwarded-For
@@ -37,12 +37,67 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 const wsClients = new Set<WebSocket>();
 const SESSION_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 
+// Presencia ("quién está viendo esto ahora mismo"): efímera, solo en
+// memoria, un cliente pertenece a un único "room" (tablero/nota/canal) a la
+// vez. Se valida acceso antes de sumar a alguien a un room para no filtrar
+// quién más está mirando un recurso al que ese usuario no tiene acceso.
+const wsUser = new Map<WebSocket, { userId: number; username: string; room: string | null }>();
+const presenceRooms = new Map<string, Set<WebSocket>>();
+
+function presenceRoomKey(resourceType: string, resourceId: number): string {
+  return `${resourceType}:${resourceId}`;
+}
+
+function broadcastPresence(room: string) {
+  const sockets = presenceRooms.get(room);
+  const viewers = sockets
+    ? [...sockets].map((s) => wsUser.get(s)).filter((u): u is NonNullable<typeof u> => !!u)
+      .map((u) => ({ userId: u.userId, username: u.username }))
+    : [];
+  const [resourceType, resourceIdStr] = room.split(':');
+  broadcast({ type: 'presence:update', resourceType, resourceId: Number(resourceIdStr), viewers });
+}
+
+function leavePresenceRoom(socket: WebSocket) {
+  const info = wsUser.get(socket);
+  if (!info?.room) return;
+  presenceRooms.get(info.room)?.delete(socket);
+  const room = info.room;
+  info.room = null;
+  broadcastPresence(room);
+}
+
 wss.on('connection', async (socket, req) => {
   const token = cookieValue(req.headers.cookie, 'qhq_session') ?? '';
-  const session = await get('SELECT user_id FROM sessions WHERE token = $1 AND (expires_at IS NULL OR expires_at >= $2)', [token, new Date().toISOString()]);
+  const session = await get<{ user_id: number }>('SELECT user_id FROM sessions WHERE token = $1 AND (expires_at IS NULL OR expires_at >= $2)', [token, new Date().toISOString()]);
   if (!session) { socket.close(); return; }
+  const account = await get<{ username: string }>('SELECT username FROM users WHERE id = $1', [session.user_id]);
   wsClients.add(socket);
-  socket.on('close', () => wsClients.delete(socket));
+  wsUser.set(socket, { userId: session.user_id, username: account?.username ?? '', room: null });
+
+  socket.on('message', async (raw) => {
+    let msg: any;
+    try { msg = JSON.parse(raw.toString()); } catch { return; }
+    if (msg?.type === 'presence:leave') { leavePresenceRoom(socket); return; }
+    if (msg?.type === 'presence:join' && ['board', 'note', 'channel'].includes(msg.resourceType) && Number.isFinite(Number(msg.resourceId))) {
+      const resourceId = Number(msg.resourceId);
+      if (!(await hasResourceAccess(msg.resourceType, resourceId, session.user_id))) return;
+      leavePresenceRoom(socket);
+      const room = presenceRoomKey(msg.resourceType, resourceId);
+      const info = wsUser.get(socket);
+      if (!info) return;
+      info.room = room;
+      if (!presenceRooms.has(room)) presenceRooms.set(room, new Set());
+      presenceRooms.get(room)!.add(socket);
+      broadcastPresence(room);
+    }
+  });
+
+  socket.on('close', () => {
+    wsClients.delete(socket);
+    leavePresenceRoom(socket);
+    wsUser.delete(socket);
+  });
 });
 
 function broadcast(event: Record<string, unknown>) {
@@ -179,7 +234,7 @@ const requireAuth: express.RequestHandler = (req: AuthedRequest, res, next) => {
 // con requirePremium. El servidor es la fuente de verdad; el cliente solo
 // refleja el plan en la UI. El upgrade es simulado: cuando haya pasarela de
 // pago real (Stripe/MercadoPago), se integra en /api/billing/upgrade.
-const FREE_LIMITS = { boards: 2, notes: 20, channels: 3, cardsPerBoard: 50, noteVersions: 3 };
+const FREE_LIMITS = { boards: 2, notes: 20, channels: 3, cardsPerBoard: 50, noteVersions: 3, channelCollaborators: 3 };
 const PREMIUM_DAYS = 30;
 const TEAM_EXTRA_SEATS = 4; // el plan Equipos cubre 5 cuentas: titular + 4 miembros
 const PLAN_PRICES_CENTS: Record<'premium' | 'team', number> = { premium: 999, team: 1999 };
@@ -308,6 +363,15 @@ async function hasResourceAccess(type: ShareType, id: number, userId: number): P
   return !!row;
 }
 
+// A diferencia de hasResourceAccess (lectura), exige rol 'editor' si es
+// colaborador — un 'viewer' pasa hasResourceAccess pero no esto.
+async function hasWriteAccess(type: ShareType, id: number, userId: number): Promise<boolean> {
+  const row = await get(`SELECT 1 FROM ${SHARE_TABLE[type]} WHERE id = $1 AND (owner_id = $2
+    OR EXISTS (SELECT 1 FROM resource_shares WHERE resource_type = $3 AND resource_id = $1 AND user_id = $2 AND role = 'editor'))`,
+    [id, userId, type]);
+  return !!row;
+}
+
 async function isResourceOwner(type: ShareType, id: number, userId: number): Promise<boolean> {
   const row = await get(`SELECT 1 FROM ${SHARE_TABLE[type]} WHERE id = $1 AND owner_id = $2`, [id, userId]);
   return !!row;
@@ -318,28 +382,45 @@ async function resourceOwnerId(type: ShareType, id: number): Promise<number | nu
   return row?.owner_id ?? null;
 }
 
-async function boardIdForList(listId: number, userId: number): Promise<number | null> {
+// Rol efectivo del usuario sobre un recurso, para que el cliente pueda
+// ocultar controles de edición a un 'viewer' (el servidor igual lo exige en
+// cada endpoint de escritura — esto es solo para la UI).
+async function myRoleFor(type: ShareType, id: number, userId: number): Promise<'owner' | 'editor' | 'viewer' | null> {
+  const row = await get<{ owner_id: number }>(`SELECT owner_id FROM ${SHARE_TABLE[type]} WHERE id = $1`, [id]);
+  if (!row) return null;
+  if (row.owner_id === userId) return 'owner';
+  const share = await get<{ role: string }>(
+    `SELECT role FROM resource_shares WHERE resource_type = $1 AND resource_id = $2 AND user_id = $3`, [type, id, userId]);
+  return share ? (share.role === 'editor' ? 'editor' : 'viewer') : null;
+}
+
+async function boardIdForList(listId: number, userId: number, requireWrite = false): Promise<number | null> {
   const row = await get<{ board_id: number }>(
     'SELECT board_id FROM lists WHERE id = $1', [listId]);
-  if (!row || !(await hasResourceAccess('board', row.board_id, userId))) return null;
+  if (!row) return null;
+  const ok = requireWrite ? await hasWriteAccess('board', row.board_id, userId) : await hasResourceAccess('board', row.board_id, userId);
+  if (!ok) return null;
   return row.board_id;
 }
 
-async function cardBoardIdForUser(cardId: number, userId: number): Promise<number | null> {
+async function cardBoardIdForUser(cardId: number, userId: number, requireWrite = false): Promise<number | null> {
   const row = await get<{ board_id: number }>(
     'SELECT lists.board_id FROM cards JOIN lists ON lists.id = cards.list_id WHERE cards.id = $1', [cardId]);
-  if (!row || !(await hasResourceAccess('board', row.board_id, userId))) return null;
+  if (!row) return null;
+  const ok = requireWrite ? await hasWriteAccess('board', row.board_id, userId) : await hasResourceAccess('board', row.board_id, userId);
+  if (!ok) return null;
   return row.board_id;
 }
 
-async function ownsEntity(type: string, id: number, userId: number): Promise<boolean> {
-  if (type === 'note') return hasResourceAccess('note', id, userId);
-  if (type === 'channel') return hasResourceAccess('channel', id, userId);
+async function ownsEntity(type: string, id: number, userId: number, requireWrite = false): Promise<boolean> {
+  const check = requireWrite ? hasWriteAccess : hasResourceAccess;
+  if (type === 'note') return check('note', id, userId);
+  if (type === 'channel') return check('channel', id, userId);
   if (type === 'message') {
     const row = await get<{ channel_id: number }>('SELECT channel_id FROM messages WHERE id = $1', [id]);
-    return !!row && hasResourceAccess('channel', row.channel_id, userId);
+    return !!row && check('channel', row.channel_id, userId);
   }
-  if (type === 'card') return !!(await cardBoardIdForUser(id, userId));
+  if (type === 'card') return !!(await cardBoardIdForUser(id, userId, requireWrite));
   return false;
 }
 
@@ -737,6 +818,44 @@ async function syncWikilinks(sourceType: string, sourceId: number, text: string,
   }
 }
 
+// ---------- @menciones: notifican, no dan acceso ----------
+function extractMentions(text: string): string[] {
+  // Exige borde de palabra antes del @ para no confundir "foo@example.com" con una mención
+  const matches = [...text.matchAll(/(?:^|\s)@([a-zA-Z0-9._-]{2,32})/g)].map((m) => m[1]);
+  return [...new Set(matches)];
+}
+
+// Solo notifica menciones NUEVAS (diff contra el contenido anterior), para
+// no re-avisar en cada autoguardado mientras la mención sigue en el texto.
+// Un @mención no da acceso a nada: si el mencionado no puede ver el
+// recurso, no se genera notificación (no hay forma de "adivinar" contenido
+// privado mencionando a alguien).
+async function notifyMentions(resourceType: 'note' | 'channel', resourceId: number, actorId: number,
+  newContent: string, oldContent: string, messageId: number | null = null) {
+  const oldMentions = new Set(extractMentions(oldContent));
+  const newMentions = extractMentions(newContent).filter((u) => !oldMentions.has(u));
+  if (newMentions.length === 0) return;
+  const excerpt = newContent.replace(/\s+/g, ' ').trim().slice(0, 140);
+  for (const username of newMentions) {
+    const target = await get<{ id: number }>('SELECT id FROM users WHERE username = $1', [username]);
+    if (!target || target.id === actorId) continue;
+    if (!(await hasResourceAccess(resourceType, resourceId, target.id))) continue;
+    await insert(`INSERT INTO notifications (user_id, kind, resource_type, resource_id, actor_id, excerpt, message_id)
+                  VALUES ($1, 'mention', $2, $3, $4, $5, $6)`,
+      [target.id, resourceType, resourceId, actorId, excerpt, messageId]);
+    broadcast({ type: 'notifications:changed', userId: target.id });
+  }
+}
+
+// ---------- Feed de actividad por tablero ----------
+// Solo cambios estructurales/de estado (crear/mover/completar/borrar), no
+// cada edición de texto — si no, es puro ruido.
+async function logActivity(boardId: number, actorId: number, action: string,
+  opts: { cardTitle?: string | null; listName?: string | null; detail?: string | null } = {}) {
+  await insert('INSERT INTO board_activity (board_id, actor_id, action, card_title, list_name, detail) VALUES ($1, $2, $3, $4, $5, $6)',
+    [boardId, actorId, action, opts.cardTitle ?? null, opts.listName ?? null, opts.detail ?? null]);
+}
+
 // ---------- Tableros (Trello) ----------
 app.get('/api/boards', requireAuth, h(async (req: AuthedRequest, res) => {
   const boards = await all(`
@@ -766,7 +885,11 @@ app.delete('/api/boards/:id', requireAuth, h(async (req: AuthedRequest, res) => 
 
 app.get('/api/boards/:id', requireAuth, h(async (req: AuthedRequest, res) => {
   const boardId = Number(req.params.id);
-  const board = await get('SELECT * FROM boards WHERE id = $1', [boardId]);
+  const board = await get(`
+    SELECT boards.*, (boards.owner_id != $2) AS shared, owner.username AS owner_username
+    FROM boards LEFT JOIN users owner ON owner.id = boards.owner_id
+    WHERE boards.id = $1
+  `, [boardId, req.userId!]);
   if (!board || !(await hasResourceAccess('board', boardId, req.userId!))) return res.status(404).json({ error: 'Tablero no encontrado' });
   const lists = await all('SELECT * FROM lists WHERE board_id = $1 ORDER BY position', [boardId]);
   for (const list of lists) {
@@ -779,22 +902,23 @@ app.get('/api/boards/:id', requireAuth, h(async (req: AuthedRequest, res) => {
       FROM cards WHERE list_id = $1 ORDER BY position
     `, [list.id]);
   }
-  res.json({ board, lists });
+  res.json({ board, lists, myRole: await myRoleFor('board', boardId, req.userId!) });
 }));
 
 app.post('/api/lists', requireAuth, h(async (req: AuthedRequest, res) => {
   const { board_id, name } = req.body ?? {};
   if (!board_id || !name?.trim()) return res.status(400).json({ error: 'Datos incompletos' });
-  if (!(await hasResourceAccess('board', Number(board_id), req.userId!))) return res.status(404).json({ error: 'Tablero no encontrado' });
+  if (!(await hasWriteAccess('board', Number(board_id), req.userId!))) return res.status(404).json({ error: 'Tablero no encontrado' });
   const max = await get<{ p: number }>('SELECT COALESCE(MAX(position), -1) AS p FROM lists WHERE board_id = $1', [board_id]);
   const listId = await insert('INSERT INTO lists (board_id, name, position) VALUES ($1, $2, $3)', [board_id, name.trim(), (max?.p ?? -1) + 1]);
+  await logActivity(board_id, req.userId!, 'list_created', { listName: name.trim() });
   broadcast({ type: 'board:changed', boardId: board_id });
   res.json({ list: await get('SELECT * FROM lists WHERE id = $1', [listId]) });
 }));
 
 app.patch('/api/lists/:id', requireAuth, h(async (req: AuthedRequest, res) => {
   const list = await get('SELECT * FROM lists WHERE id = $1', [Number(req.params.id)]);
-  if (!list || !(await hasResourceAccess('board', list.board_id, req.userId!))) return res.status(404).json({ error: 'Lista no encontrada' });
+  if (!list || !(await hasWriteAccess('board', list.board_id, req.userId!))) return res.status(404).json({ error: 'Lista no encontrada' });
   const name = req.body?.name?.trim() || list.name;
   await run('UPDATE lists SET name = $1 WHERE id = $2', [name, list.id]);
   broadcast({ type: 'board:changed', boardId: list.board_id });
@@ -803,8 +927,9 @@ app.patch('/api/lists/:id', requireAuth, h(async (req: AuthedRequest, res) => {
 
 app.delete('/api/lists/:id', requireAuth, h(async (req: AuthedRequest, res) => {
   const list = await get('SELECT * FROM lists WHERE id = $1', [Number(req.params.id)]);
-  if (!list || !(await hasResourceAccess('board', list.board_id, req.userId!))) return res.status(404).json({ error: 'Lista no encontrada' });
+  if (!list || !(await hasWriteAccess('board', list.board_id, req.userId!))) return res.status(404).json({ error: 'Lista no encontrada' });
   await run('DELETE FROM lists WHERE id = $1', [list.id]);
+  await logActivity(list.board_id, req.userId!, 'list_deleted', { listName: list.name });
   broadcast({ type: 'board:changed', boardId: list.board_id });
   res.json({ ok: true });
 }));
@@ -812,7 +937,7 @@ app.delete('/api/lists/:id', requireAuth, h(async (req: AuthedRequest, res) => {
 app.post('/api/cards', requireAuth, h(async (req: AuthedRequest, res) => {
   const { list_id, title } = req.body ?? {};
   if (!list_id || !title?.trim()) return res.status(400).json({ error: 'Datos incompletos' });
-  const boardId = await boardIdForList(list_id, req.userId!);
+  const boardId = await boardIdForList(list_id, req.userId!, true);
   if (!boardId) return res.status(404).json({ error: 'Lista no encontrada' });
   // El cupo de tarjetas por tablero es una propiedad del tablero: se cuenta
   // sobre el tablero entero (no solo lo creado por quien actúa) y se evalúa
@@ -823,6 +948,8 @@ app.post('/api/cards', requireAuth, h(async (req: AuthedRequest, res) => {
     [boardId], FREE_LIMITS.cardsPerBoard, 'tarjetas por tablero'))) return;
   const max = await get<{ p: number }>('SELECT COALESCE(MAX(position), -1) AS p FROM cards WHERE list_id = $1', [list_id]);
   const cardId = await insert('INSERT INTO cards (list_id, title, position) VALUES ($1, $2, $3)', [list_id, title.trim(), (max?.p ?? -1) + 1]);
+  const listName = (await get<{ name: string }>('SELECT name FROM lists WHERE id = $1', [list_id]))?.name;
+  await logActivity(boardId, req.userId!, 'card_created', { cardTitle: title.trim(), listName });
   broadcast({ type: 'board:changed', boardId });
   res.json({ card: await get('SELECT cards.* FROM cards WHERE id = $1', [cardId]) });
 }));
@@ -830,9 +957,10 @@ app.post('/api/cards', requireAuth, h(async (req: AuthedRequest, res) => {
 app.get('/api/cards/:id', requireAuth, h(async (req, res) => {
   const cardId = Number(req.params.id);
   const card = await get(`
-    SELECT cards.*, lists.name AS list_name, lists.board_id
+    SELECT cards.*, lists.name AS list_name, lists.board_id, editor.username AS updated_by_username
     FROM cards
     JOIN lists ON lists.id = cards.list_id
+    LEFT JOIN users editor ON editor.id = cards.updated_by
     WHERE cards.id = $1
   `, [cardId]);
   if (!card || !(await hasResourceAccess('board', card.board_id, req.userId!))) return res.status(404).json({ error: 'Tarjeta no encontrada' });
@@ -878,15 +1006,18 @@ app.get('/api/cards/:id', requireAuth, h(async (req, res) => {
 
 app.patch('/api/cards/:id', requireAuth, h(async (req, res) => {
   const card = await get('SELECT cards.*, lists.board_id FROM cards JOIN lists ON lists.id = cards.list_id WHERE cards.id = $1', [Number(req.params.id)]);
-  if (!card || !(await hasResourceAccess('board', card.board_id, req.userId!))) return res.status(404).json({ error: 'Tarjeta no encontrada' });
+  if (!card || !(await hasWriteAccess('board', card.board_id, req.userId!))) return res.status(404).json({ error: 'Tarjeta no encontrada' });
   const title = req.body?.title?.trim() || card.title;
   const description = req.body?.description ?? card.description;
   const labels = req.body?.labels !== undefined ? JSON.stringify(req.body.labels) : card.labels;
   const dueDate = req.body?.due_date !== undefined ? (req.body.due_date || null) : card.due_date;
   const completed = req.body?.completed !== undefined ? (req.body.completed ? 1 : 0) : card.completed;
-  await run(`UPDATE cards SET title = $1, description = $2, labels = $3, due_date = $4, completed = $5 WHERE id = $6`,
-    [title, description, labels, dueDate, completed, card.id]);
+  await run(`UPDATE cards SET title = $1, description = $2, labels = $3, due_date = $4, completed = $5, updated_by = $6 WHERE id = $7`,
+    [title, description, labels, dueDate, completed, req.userId!, card.id]);
   await syncWikilinks('card', card.id, description, 'wikilink', (await resourceOwnerId('board', card.board_id))!);
+  if (req.body?.completed !== undefined && completed !== card.completed) {
+    await logActivity(card.board_id, req.userId!, completed ? 'card_completed' : 'card_uncompleted', { cardTitle: title });
+  }
   broadcast({ type: 'board:changed', boardId: card.board_id });
   res.json({ card: await get('SELECT * FROM cards WHERE id = $1', [card.id]) });
 }));
@@ -897,8 +1028,8 @@ app.post('/api/cards/:id/move', requireAuth, h(async (req, res) => {
   const card = await get('SELECT cards.*, lists.board_id FROM cards JOIN lists ON lists.id = cards.list_id WHERE cards.id = $1', [cardId]);
   const target = await get('SELECT * FROM lists WHERE id = $1', [list_id]);
   if (!card || !target
-      || !(await hasResourceAccess('board', card.board_id, req.userId!))
-      || !(await hasResourceAccess('board', target.board_id, req.userId!))) {
+      || !(await hasWriteAccess('board', card.board_id, req.userId!))
+      || !(await hasWriteAccess('board', target.board_id, req.userId!))) {
     return res.status(404).json({ error: 'Tarjeta o lista no encontrada' });
   }
 
@@ -910,7 +1041,10 @@ app.post('/api/cards/:id/move', requireAuth, h(async (req, res) => {
   }
 
   // Automatizaciones: aplicar reglas de la lista destino si la tarjeta cambió de lista
-  if (card.list_id !== list_id) await applyRules(cardId, list_id);
+  if (card.list_id !== list_id) {
+    await applyRules(cardId, list_id);
+    await logActivity(target.board_id, req.userId!, 'card_moved', { cardTitle: card.title, listName: target.name });
+  }
 
   broadcast({ type: 'board:changed', boardId: card.board_id });
   if (target.board_id !== card.board_id) broadcast({ type: 'board:changed', boardId: target.board_id });
@@ -919,9 +1053,10 @@ app.post('/api/cards/:id/move', requireAuth, h(async (req, res) => {
 
 app.delete('/api/cards/:id', requireAuth, h(async (req, res) => {
   const card = await get('SELECT cards.*, lists.board_id FROM cards JOIN lists ON lists.id = cards.list_id WHERE cards.id = $1', [Number(req.params.id)]);
-  if (!card || !(await hasResourceAccess('board', card.board_id, req.userId!))) return res.status(404).json({ error: 'Tarjeta no encontrada' });
+  if (!card || !(await hasWriteAccess('board', card.board_id, req.userId!))) return res.status(404).json({ error: 'Tarjeta no encontrada' });
   await run('DELETE FROM cards WHERE id = $1', [card.id]);
   await run("DELETE FROM links WHERE (source_type = 'card' AND source_id = $1) OR (target_type = 'card' AND target_id = $1)", [card.id]);
+  await logActivity(card.board_id, req.userId!, 'card_deleted', { cardTitle: card.title });
   broadcast({ type: 'board:changed', boardId: card.board_id });
   res.json({ ok: true });
 }));
@@ -947,6 +1082,18 @@ async function applyRules(cardId: number, listId: number) {
   }
 }
 
+app.get('/api/boards/:id/activity', requireAuth, h(async (req: AuthedRequest, res) => {
+  const boardId = Number(req.params.id);
+  if (!(await hasResourceAccess('board', boardId, req.userId!))) return res.status(404).json({ error: 'Tablero no encontrado' });
+  const activity = await all(`
+    SELECT board_activity.id, board_activity.action, board_activity.card_title, board_activity.list_name,
+      board_activity.detail, board_activity.created_at, actor.username AS actor_username
+    FROM board_activity LEFT JOIN users actor ON actor.id = board_activity.actor_id
+    WHERE board_activity.board_id = $1 ORDER BY board_activity.id DESC LIMIT 100
+  `, [boardId]);
+  res.json({ activity });
+}));
+
 app.get('/api/boards/:id/rules', requireAuth, h(async (req: AuthedRequest, res) => {
   const boardId = Number(req.params.id);
   if (!(await hasResourceAccess('board', boardId, req.userId!))) return res.status(404).json({ error: 'Tablero no encontrado' });
@@ -962,7 +1109,7 @@ app.post('/api/boards/:id/rules', requireAuth, requirePremium, h(async (req: Aut
   const boardId = Number(req.params.id);
   const { list_id, action, param } = req.body ?? {};
   const validActions = ['complete', 'uncomplete', 'label', 'due_today', 'clear_due'];
-  const listBoardId = list_id ? await boardIdForList(Number(list_id), req.userId!) : null;
+  const listBoardId = list_id ? await boardIdForList(Number(list_id), req.userId!, true) : null;
   if (!list_id || !validActions.includes(action) || listBoardId !== boardId) return res.status(400).json({ error: 'Regla inválida' });
   await insert('INSERT INTO board_rules (board_id, list_id, action, param) VALUES ($1, $2, $3, $4)',
     [boardId, list_id, action, param ?? '']);
@@ -972,7 +1119,7 @@ app.post('/api/boards/:id/rules', requireAuth, requirePremium, h(async (req: Aut
 
 app.delete('/api/rules/:id', requireAuth, h(async (req: AuthedRequest, res) => {
   const rule = await get<{ board_id: number }>('SELECT board_id FROM board_rules WHERE id = $1', [Number(req.params.id)]);
-  if (!rule || !(await hasResourceAccess('board', rule.board_id, req.userId!))) return res.status(404).json({ error: 'Regla no encontrada' });
+  if (!rule || !(await hasWriteAccess('board', rule.board_id, req.userId!))) return res.status(404).json({ error: 'Regla no encontrada' });
   await run('DELETE FROM board_rules WHERE id = $1', [Number(req.params.id)]);
   broadcast({ type: 'board:changed', boardId: rule.board_id });
   res.json({ ok: true });
@@ -986,7 +1133,7 @@ async function cardBoardId(cardId: number): Promise<number | null> {
 
 app.post('/api/cards/:id/checklist', requireAuth, h(async (req: AuthedRequest, res) => {
   const cardId = Number(req.params.id);
-  const boardId = await cardBoardIdForUser(cardId, req.userId!);
+  const boardId = await cardBoardIdForUser(cardId, req.userId!, true);
   if (!boardId) return res.status(404).json({ error: 'Tarjeta no encontrada' });
   const text = (req.body?.text ?? '').trim();
   if (!text) return res.status(400).json({ error: 'Texto requerido' });
@@ -999,7 +1146,7 @@ app.post('/api/cards/:id/checklist', requireAuth, h(async (req: AuthedRequest, r
 app.patch('/api/checklist/:id', requireAuth, h(async (req: AuthedRequest, res) => {
   const item = await get('SELECT checklist_items.* FROM checklist_items JOIN cards ON cards.id = checklist_items.card_id WHERE checklist_items.id = $1', [Number(req.params.id)]);
   const boardId = item ? await cardBoardId(item.card_id) : null;
-  if (!item || !boardId || !(await hasResourceAccess('board', boardId, req.userId!))) return res.status(404).json({ error: 'Elemento no encontrado' });
+  if (!item || !boardId || !(await hasWriteAccess('board', boardId, req.userId!))) return res.status(404).json({ error: 'Elemento no encontrado' });
   const text = req.body?.text?.trim() || item.text;
   const done = req.body?.done !== undefined ? (req.body.done ? 1 : 0) : item.done;
   await run('UPDATE checklist_items SET text = $1, done = $2 WHERE id = $3', [text, done, item.id]);
@@ -1010,7 +1157,7 @@ app.patch('/api/checklist/:id', requireAuth, h(async (req: AuthedRequest, res) =
 app.delete('/api/checklist/:id', requireAuth, h(async (req: AuthedRequest, res) => {
   const item = await get<{ card_id: number }>('SELECT card_id FROM checklist_items WHERE id = $1', [Number(req.params.id)]);
   const boardId = item ? await cardBoardId(item.card_id) : null;
-  if (!item || !boardId || !(await hasResourceAccess('board', boardId, req.userId!))) return res.status(404).json({ error: 'Elemento no encontrado' });
+  if (!item || !boardId || !(await hasWriteAccess('board', boardId, req.userId!))) return res.status(404).json({ error: 'Elemento no encontrado' });
   await run('DELETE FROM checklist_items WHERE id = $1', [Number(req.params.id)]);
   broadcast({ type: 'board:changed', boardId });
   res.json({ ok: true });
@@ -1021,9 +1168,27 @@ app.get('/api/users', requireAuth, h(async (_req, res) => {
   res.json({ users: await all('SELECT id, username FROM users ORDER BY username') });
 }));
 
+// Solo gente con acceso real al tablero (dueño + colaboradores aceptados),
+// para asignar como miembro de una tarjeta — antes se ofrecía CUALQUIER
+// usuario de la plataforma, lo cual no tenía sentido y exponía el
+// directorio completo de usuarios a cualquiera con sesión iniciada.
+app.get('/api/boards/:id/collaborators', requireAuth, h(async (req: AuthedRequest, res) => {
+  const boardId = Number(req.params.id);
+  if (!(await hasResourceAccess('board', boardId, req.userId!))) return res.status(404).json({ error: 'Tablero no encontrado' });
+  const users = await all(`
+    SELECT users.id, users.username FROM users WHERE users.id = (SELECT owner_id FROM boards WHERE id = $1)
+    UNION
+    SELECT users.id, users.username FROM resource_shares
+    JOIN users ON users.id = resource_shares.user_id
+    WHERE resource_shares.resource_type = 'board' AND resource_shares.resource_id = $1
+    ORDER BY username
+  `, [boardId]);
+  res.json({ users });
+}));
+
 app.post('/api/cards/:id/members', requireAuth, h(async (req: AuthedRequest, res) => {
   const cardId = Number(req.params.id);
-  const boardId = await cardBoardIdForUser(cardId, req.userId!);
+  const boardId = await cardBoardIdForUser(cardId, req.userId!, true);
   if (!boardId) return res.status(404).json({ error: 'Tarjeta no encontrada' });
   const userId = Number(req.body?.user_id);
   if (!userId) return res.status(400).json({ error: 'Usuario requerido' });
@@ -1034,7 +1199,7 @@ app.post('/api/cards/:id/members', requireAuth, h(async (req: AuthedRequest, res
 
 app.delete('/api/cards/:id/members/:userId', requireAuth, h(async (req: AuthedRequest, res) => {
   const cardId = Number(req.params.id);
-  const boardId = await cardBoardIdForUser(cardId, req.userId!);
+  const boardId = await cardBoardIdForUser(cardId, req.userId!, true);
   if (!boardId) return res.status(404).json({ error: 'Tarjeta no encontrada' });
   await run('DELETE FROM card_members WHERE card_id = $1 AND user_id = $2', [cardId, Number(req.params.userId)]);
   broadcast({ type: 'board:changed', boardId });
@@ -1042,6 +1207,24 @@ app.delete('/api/cards/:id/members/:userId', requireAuth, h(async (req: AuthedRe
 }));
 
 // Crea (o devuelve) el canal de discusión vinculado a una tarjeta
+// El canal de discusión de una tarjeta debe ser visible para todo el que
+// tenga acceso al tablero (dueño + colaboradores), no solo para quien lo
+// creó — si no, un colaborador del tablero no puede ver ni sus mensajes.
+// channelOwnerId es el DUEÑO real del canal (channels.owner_id), no quien
+// está pidiendo abrirlo ahora — si no, un colaborador que reabre un canal
+// que creó otro quedaría excluido de sus propios grantees por error.
+async function shareWithBoardCollaborators(channelId: number, channelOwnerId: number, boardId: number) {
+  const boardOwnerId = (await resourceOwnerId('board', boardId))!;
+  const boardCollaborators = await all<{ user_id: number }>(
+    'SELECT user_id FROM resource_shares WHERE resource_type = $1 AND resource_id = $2', ['board', boardId]);
+  const grantees = new Set([boardOwnerId, ...boardCollaborators.map((c) => c.user_id)]);
+  grantees.delete(channelOwnerId); // ya tiene acceso por ser dueño del canal
+  for (const userId of grantees) {
+    await run('INSERT INTO resource_shares (resource_type, resource_id, owner_id, user_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING',
+      ['channel', channelId, channelOwnerId, userId]);
+  }
+}
+
 app.post('/api/cards/:id/discussion', requireAuth, h(async (req, res) => {
   const cardId = Number(req.params.id);
   const card = await get<{ title: string; board_id: number }>('SELECT cards.title, lists.board_id FROM cards JOIN lists ON lists.id = cards.list_id WHERE cards.id = $1', [cardId]);
@@ -1049,12 +1232,20 @@ app.post('/api/cards/:id/discussion', requireAuth, h(async (req, res) => {
 
   // Sin filtrar por dueño: solo puede existir un canal de discusión por
   // tarjeta, sin importar qué colaborador lo haya creado.
-  const existing = await get(`
-    SELECT channels.id, channels.name FROM links
+  const existing = await get<{ id: number; name: string; owner_id: number }>(`
+    SELECT channels.id, channels.name, channels.owner_id FROM links
     JOIN channels ON channels.id = links.target_id
     WHERE links.source_type = 'card' AND links.source_id = $1 AND links.target_type = 'channel' AND links.kind = 'discussion'
   `, [cardId]);
-  if (existing) return res.json({ channel: existing });
+  if (existing) {
+    // Puede haber colaboradores nuevos en el tablero desde que se creó el
+    // canal: se re-sincroniza el acceso en cada apertura (es barato e idempotente).
+    await shareWithBoardCollaborators(existing.id, existing.owner_id, card.board_id);
+    return res.json({ channel: { id: existing.id, name: existing.name } });
+  }
+  // Crear el canal (a diferencia de solo abrir uno que ya existe) es una
+  // acción de escritura: un viewer puede leer la discusión, no crearla.
+  if (!(await hasWriteAccess('board', card.board_id, req.userId!))) return res.status(403).json({ error: 'No podés crear la discusión de esta tarjeta' });
   if (!(await withinLimit(req.userId!, res, 'SELECT COUNT(*)::int AS n FROM channels WHERE owner_id = $1', [req.userId!], FREE_LIMITS.channels, 'canales'))) return;
 
   const slugBase = 'tarjeta-' + card.title.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
@@ -1065,6 +1256,7 @@ app.post('/api/cards/:id/discussion', requireAuth, h(async (req, res) => {
   const channelId = await insert('INSERT INTO channels (owner_id, name) VALUES ($1, $2)', [req.userId!, slug]);
   await run(`INSERT INTO links (source_type, source_id, target_type, target_id, kind)
              VALUES ('card', $1, 'channel', $2, 'discussion') ON CONFLICT DO NOTHING`, [cardId, channelId]);
+  await shareWithBoardCollaborators(channelId, req.userId!, card.board_id);
   broadcast({ type: 'channels:changed' });
   res.json({ channel: { id: channelId, name: slug } });
 }));
@@ -1126,7 +1318,7 @@ app.post('/api/notes', requireAuth, h(async (req: AuthedRequest, res) => {
   const noteId = await insert('INSERT INTO notes (owner_id, title, content) VALUES ($1, $2, $3)', [req.userId!, title, content]);
   await syncTags(noteId, content);
   await syncWikilinks('note', noteId, content, 'wikilink', req.userId!);
-  broadcast({ type: 'notes:changed' });
+  broadcast({ type: 'notes:changed', noteId });
   res.json({ note: await get('SELECT * FROM notes WHERE id = $1 AND owner_id = $2', [noteId, req.userId!]) });
 }));
 
@@ -1152,7 +1344,13 @@ app.delete('/api/templates/:id', requireAuth, requirePremium, h(async (req, res)
 
 app.get('/api/notes/:id', requireAuth, h(async (req, res) => {
   const noteId = Number(req.params.id);
-  const note = await get('SELECT * FROM notes WHERE id = $1', [noteId]);
+  const note = await get(`
+    SELECT notes.*, editor.username AS updated_by_username, (notes.owner_id != $2) AS shared, owner.username AS owner_username
+    FROM notes
+    LEFT JOIN users editor ON editor.id = notes.updated_by
+    LEFT JOIN users owner ON owner.id = notes.owner_id
+    WHERE notes.id = $1
+  `, [noteId, req.userId!]);
   if (!note || !(await hasResourceAccess('note', noteId, req.userId!))) return res.status(404).json({ error: 'Nota no encontrada' });
 
   const backlinksAll = await all(`
@@ -1180,12 +1378,12 @@ app.get('/api/notes/:id', requireAuth, h(async (req, res) => {
   const outgoing = [];
   for (const n of outgoingAll) if (await hasResourceAccess('note', n.id, req.userId!)) outgoing.push(n);
 
-  res.json({ note, backlinks, outgoing });
+  res.json({ note, backlinks, outgoing, myRole: await myRoleFor('note', noteId, req.userId!) });
 }));
 
 app.patch('/api/notes/:id', requireAuth, h(async (req, res) => {
   const note = await get('SELECT * FROM notes WHERE id = $1', [Number(req.params.id)]);
-  if (!note || !(await hasResourceAccess('note', note.id, req.userId!))) return res.status(404).json({ error: 'Nota no encontrada' });
+  if (!note || !(await hasWriteAccess('note', note.id, req.userId!))) return res.status(404).json({ error: 'Nota no encontrada' });
   const title = req.body?.title?.trim() || note.title;
   const content = req.body?.content ?? note.content;
 
@@ -1204,13 +1402,14 @@ app.patch('/api/notes/:id', requireAuth, h(async (req, res) => {
     `, [note.id]);
   }
 
-  await run(`UPDATE notes SET title = $1, content = $2, updated_at = to_char(now() at time zone 'utc', 'YYYY-MM-DD HH24:MI:SS') WHERE id = $3`,
-    [title, content, note.id]);
+  await run(`UPDATE notes SET title = $1, content = $2, updated_by = $3, updated_at = to_char(now() at time zone 'utc', 'YYYY-MM-DD HH24:MI:SS') WHERE id = $4`,
+    [title, content, req.userId!, note.id]);
   // Los wikilinks/tags resuelven contra el dueño real de la nota, no contra
   // quien esté editando (puede ser un colaborador distinto).
   await syncWikilinks('note', note.id, content, 'wikilink', note.owner_id);
   await syncTags(note.id, content);
-  broadcast({ type: 'notes:changed' });
+  await notifyMentions('note', note.id, req.userId!, content, note.content);
+  broadcast({ type: 'notes:changed', noteId: note.id });
   res.json({ note: await get('SELECT * FROM notes WHERE id = $1', [note.id]) });
 }));
 
@@ -1239,14 +1438,14 @@ app.post('/api/notes/:id/restore', requireAuth, requirePremium, h(async (req, re
   const noteId = Number(req.params.id);
   const note = await get('SELECT * FROM notes WHERE id = $1', [noteId]);
   const version = await get('SELECT * FROM note_versions WHERE id = $1 AND note_id = $2', [Number(req.body?.version_id), noteId]);
-  if (!note || !version || !(await hasResourceAccess('note', noteId, req.userId!))) return res.status(404).json({ error: 'Nota o versión no encontrada' });
+  if (!note || !version || !(await hasWriteAccess('note', noteId, req.userId!))) return res.status(404).json({ error: 'Nota o versión no encontrada' });
   // El estado actual pasa al historial antes de restaurar
   await insert('INSERT INTO note_versions (note_id, title, content) VALUES ($1, $2, $3)', [noteId, note.title, note.content]);
-  await run(`UPDATE notes SET title = $1, content = $2, updated_at = to_char(now() at time zone 'utc', 'YYYY-MM-DD HH24:MI:SS') WHERE id = $3`,
-    [version.title, version.content, noteId]);
+  await run(`UPDATE notes SET title = $1, content = $2, updated_by = $3, updated_at = to_char(now() at time zone 'utc', 'YYYY-MM-DD HH24:MI:SS') WHERE id = $4`,
+    [version.title, version.content, req.userId!, noteId]);
   await syncWikilinks('note', noteId, version.content, 'wikilink', note.owner_id);
   await syncTags(noteId, version.content);
-  broadcast({ type: 'notes:changed' });
+  broadcast({ type: 'notes:changed', noteId });
   res.json({ note: await get('SELECT * FROM notes WHERE id = $1', [noteId]) });
 }));
 
@@ -1254,7 +1453,7 @@ app.delete('/api/notes/:id', requireAuth, h(async (req, res) => {
   const noteId = Number(req.params.id);
   await run('DELETE FROM notes WHERE id = $1 AND owner_id = $2', [noteId, req.userId!]);
   await run("DELETE FROM links WHERE (source_type = 'note' AND source_id = $1) OR (target_type = 'note' AND target_id = $1)", [noteId]);
-  broadcast({ type: 'notes:changed' });
+  broadcast({ type: 'notes:changed', noteId, deleted: true });
   res.json({ ok: true });
 }));
 
@@ -1267,7 +1466,7 @@ app.post('/api/notes/resolve', requireAuth, h(async (req, res) => {
     if (!(await withinLimit(req.userId!, res, 'SELECT COUNT(*)::int AS n FROM notes WHERE owner_id = $1', [req.userId!], FREE_LIMITS.notes, 'notas'))) return;
     const noteId = await insert('INSERT INTO notes (owner_id, title, content) VALUES ($1, $2, $3)', [req.userId!, title, `# ${title}\n\n`]);
     note = await get('SELECT * FROM notes WHERE id = $1 AND owner_id = $2', [noteId, req.userId!]);
-    broadcast({ type: 'notes:changed' });
+    broadcast({ type: 'notes:changed', noteId });
   }
   res.json({ note });
 }));
@@ -1301,9 +1500,11 @@ app.get('/api/channels/:id/messages', requireAuth, h(async (req: AuthedRequest, 
   const channelId = Number(req.params.id);
   const channel = await get(`
     SELECT channels.*,
-      (SELECT links.source_id FROM links WHERE links.target_type = 'channel' AND links.target_id = channels.id AND links.kind = 'discussion' AND links.source_type = 'card') AS card_id
-    FROM channels WHERE channels.id = $1
-  `, [channelId]);
+      (SELECT links.source_id FROM links WHERE links.target_type = 'channel' AND links.target_id = channels.id AND links.kind = 'discussion' AND links.source_type = 'card') AS card_id,
+      (channels.owner_id != $2) AS shared, owner.username AS owner_username
+    FROM channels LEFT JOIN users owner ON owner.id = channels.owner_id
+    WHERE channels.id = $1
+  `, [channelId, req.userId!]);
   if (!channel || !(await hasResourceAccess('channel', channelId, req.userId!))) return res.status(404).json({ error: 'Canal no encontrado' });
   const cardTitle = channel.card_id
     ? (await get<{ title: string }>('SELECT title FROM cards WHERE id = $1', [channel.card_id]))?.title ?? null
@@ -1331,7 +1532,7 @@ app.get('/api/channels/:id/messages', requireAuth, h(async (req: AuthedRequest, 
     WHERE channel_id = $1 AND pinned = 1 ORDER BY messages.id
   `, [channelId]);
 
-  res.json({ channel: { ...channel, card_title: cardTitle }, messages, reactions, pinned });
+  res.json({ channel: { ...channel, card_title: cardTitle }, messages, reactions, pinned, myRole: await myRoleFor('channel', channelId, req.userId!) });
 }));
 
 app.get('/api/messages/:id/thread', requireAuth, h(async (req: AuthedRequest, res) => {
@@ -1355,7 +1556,7 @@ app.post('/api/channels/:id/messages', requireAuth, h(async (req: AuthedRequest,
   const content = (req.body?.content ?? '').trim();
   const parentId = req.body?.parent_id ? Number(req.body.parent_id) : null;
   if (!content) return res.status(400).json({ error: 'Mensaje vacío' });
-  if (!(await hasResourceAccess('channel', channelId, req.userId!))) return res.status(404).json({ error: 'Canal no encontrado' });
+  if (!(await hasWriteAccess('channel', channelId, req.userId!))) return res.status(404).json({ error: 'Canal no encontrado' });
   if (parentId) {
     const parent = await get('SELECT id FROM messages WHERE id = $1 AND channel_id = $2 AND parent_id IS NULL', [parentId, channelId]);
     if (!parent) return res.status(400).json({ error: 'Hilo inválido' });
@@ -1364,6 +1565,7 @@ app.post('/api/channels/:id/messages', requireAuth, h(async (req: AuthedRequest,
   const messageId = await insert('INSERT INTO messages (channel_id, user_id, content, parent_id) VALUES ($1, $2, $3, $4)',
     [channelId, req.userId!, content, parentId]);
   await syncWikilinks('message', messageId, content, 'mention', (await resourceOwnerId('channel', channelId))!);
+  await notifyMentions('channel', channelId, req.userId!, content, '', messageId);
 
   const message = await get(`
     SELECT messages.*, users.username FROM messages
@@ -1375,20 +1577,21 @@ app.post('/api/channels/:id/messages', requireAuth, h(async (req: AuthedRequest,
 
 app.patch('/api/messages/:id', requireAuth, h(async (req: AuthedRequest, res) => {
   const message = await get('SELECT * FROM messages WHERE id = $1', [Number(req.params.id)]);
-  if (!message || !(await hasResourceAccess('channel', message.channel_id, req.userId!))) return res.status(404).json({ error: 'Mensaje no encontrado' });
+  if (!message || !(await hasWriteAccess('channel', message.channel_id, req.userId!))) return res.status(404).json({ error: 'Mensaje no encontrado' });
   if (message.user_id !== req.userId) return res.status(403).json({ error: 'Solo puedes editar tus mensajes' });
   const content = (req.body?.content ?? '').trim();
   if (!content) return res.status(400).json({ error: 'Mensaje vacío' });
   await run(`UPDATE messages SET content = $1, edited_at = to_char(now() at time zone 'utc', 'YYYY-MM-DD HH24:MI:SS') WHERE id = $2`,
     [content, message.id]);
   await syncWikilinks('message', message.id, content, 'mention', (await resourceOwnerId('channel', message.channel_id))!);
+  await notifyMentions('channel', message.channel_id, req.userId!, content, message.content, message.id);
   broadcast({ type: 'chat:changed', channelId: message.channel_id });
   res.json({ ok: true });
 }));
 
 app.delete('/api/messages/:id', requireAuth, h(async (req: AuthedRequest, res) => {
   const message = await get('SELECT * FROM messages WHERE id = $1', [Number(req.params.id)]);
-  if (!message || !(await hasResourceAccess('channel', message.channel_id, req.userId!))) return res.status(404).json({ error: 'Mensaje no encontrado' });
+  if (!message || !(await hasWriteAccess('channel', message.channel_id, req.userId!))) return res.status(404).json({ error: 'Mensaje no encontrado' });
   if (message.user_id !== req.userId) return res.status(403).json({ error: 'Solo puedes eliminar tus mensajes' });
   const replyIds = (await all<{ id: number }>('SELECT id FROM messages WHERE parent_id = $1', [message.id])).map((r) => r.id);
   for (const id of [message.id, ...replyIds]) {
@@ -1401,7 +1604,7 @@ app.delete('/api/messages/:id', requireAuth, h(async (req: AuthedRequest, res) =
 
 app.post('/api/messages/:id/react', requireAuth, h(async (req: AuthedRequest, res) => {
   const message = await get<{ channel_id: number }>('SELECT channel_id FROM messages WHERE id = $1', [Number(req.params.id)]);
-  if (!message || !(await hasResourceAccess('channel', message.channel_id, req.userId!))) return res.status(404).json({ error: 'Mensaje no encontrado' });
+  if (!message || !(await hasWriteAccess('channel', message.channel_id, req.userId!))) return res.status(404).json({ error: 'Mensaje no encontrado' });
   const emoji = (req.body?.emoji ?? '').trim();
   if (!emoji || emoji.length > 8) return res.status(400).json({ error: 'Emoji inválido' });
   const existing = await get('SELECT 1 FROM reactions WHERE message_id = $1 AND user_id = $2 AND emoji = $3',
@@ -1419,7 +1622,7 @@ app.post('/api/messages/:id/react', requireAuth, h(async (req: AuthedRequest, re
 
 app.post('/api/messages/:id/pin', requireAuth, h(async (req, res) => {
   const message = await get<{ channel_id: number; pinned: number }>('SELECT channel_id, pinned FROM messages WHERE id = $1', [Number(req.params.id)]);
-  if (!message || !(await hasResourceAccess('channel', message.channel_id, req.userId!))) return res.status(404).json({ error: 'Mensaje no encontrado' });
+  if (!message || !(await hasWriteAccess('channel', message.channel_id, req.userId!))) return res.status(404).json({ error: 'Mensaje no encontrado' });
   await run('UPDATE messages SET pinned = $1 WHERE id = $2', [message.pinned ? 0 : 1, Number(req.params.id)]);
   broadcast({ type: 'chat:changed', channelId: message.channel_id });
   res.json({ ok: true });
@@ -1431,7 +1634,7 @@ app.post('/api/channels/:id/schedule', requireAuth, requirePremium, h(async (req
   const content = (req.body?.content ?? '').trim();
   const sendAt = req.body?.send_at; // "YYYY-MM-DDTHH:mm" en hora local del servidor
   if (!content || !sendAt) return res.status(400).json({ error: 'Contenido y fecha requeridos' });
-  if (!(await hasResourceAccess('channel', channelId, req.userId!))) return res.status(404).json({ error: 'Canal no encontrado' });
+  if (!(await hasWriteAccess('channel', channelId, req.userId!))) return res.status(404).json({ error: 'Canal no encontrado' });
   const timestamp = new Date(sendAt).getTime();
   if (!Number.isFinite(timestamp) || timestamp < Date.now()) return res.status(400).json({ error: 'La fecha debe ser futura' });
   await insert('INSERT INTO scheduled_messages (channel_id, user_id, content, send_at) VALUES ($1, $2, $3, $4)',
@@ -1483,7 +1686,7 @@ app.post('/api/links', requireAuth, h(async (req: AuthedRequest, res) => {
   const sourceId = Number(source_id);
   const targetId = Number(target_id);
   if (!valid.includes(source_type) || !valid.includes(target_type) || !sourceId || !targetId ||
-      !(await ownsEntity(source_type, sourceId, req.userId!)) || !(await ownsEntity(target_type, targetId, req.userId!))) {
+      !(await ownsEntity(source_type, sourceId, req.userId!, true)) || !(await ownsEntity(target_type, targetId, req.userId!, true))) {
     return res.status(400).json({ error: 'Vínculo inválido' });
   }
   await run(`INSERT INTO links (source_type, source_id, target_type, target_id, kind)
@@ -1495,7 +1698,7 @@ app.post('/api/links', requireAuth, h(async (req: AuthedRequest, res) => {
 
 app.delete('/api/links/:id', requireAuth, h(async (req: AuthedRequest, res) => {
   const link = await get<{ source_type: string; source_id: number; target_type: string; target_id: number }>('SELECT * FROM links WHERE id = $1', [Number(req.params.id)]);
-  if (!link || !(await ownsEntity(link.source_type, link.source_id, req.userId!)) || !(await ownsEntity(link.target_type, link.target_id, req.userId!))) {
+  if (!link || !(await ownsEntity(link.source_type, link.source_id, req.userId!, true)) || !(await ownsEntity(link.target_type, link.target_id, req.userId!, true))) {
     return res.status(404).json({ error: 'Vínculo no encontrado' });
   }
   await run('DELETE FROM links WHERE id = $1', [Number(req.params.id)]);
@@ -1555,20 +1758,95 @@ app.get('/api/search', requireAuth, h(async (req: AuthedRequest, res) => {
 }));
 
 // ---------- Gestión de colaboradores (compartir tableros/notas/canales) ----------
-// Ver, invitar (solo el dueño) y quitar colaboradores por @username. Un
-// colaborador puede quitarse a sí mismo ("salir") aunque no sea el dueño.
+// Invitar (solo el dueño) manda un correo y crea una fila pendiente en
+// resource_invites; el invitado recién pasa a resource_shares (acceso real)
+// cuando acepta desde /api/invites/:id/accept. Un colaborador puede quitarse
+// a sí mismo ("salir"), y el dueño puede cancelar invitaciones pendientes.
 const SHARE_LABEL: Record<ShareType, string> = { board: 'Tablero', note: 'Nota', channel: 'Canal' };
+const SHARE_LABEL_LOWER: Record<ShareType, string> = { board: 'tablero', note: 'nota', channel: 'canal' };
+
+// Nombre visible del recurso para el correo de invitación (título/nombre)
+async function resourceDisplayName(type: ShareType, id: number): Promise<string> {
+  const col = type === 'note' ? 'title' : 'name';
+  const row = await get<Record<string, string>>(`SELECT ${col} AS name FROM ${SHARE_TABLE[type]} WHERE id = $1`, [id]);
+  return row?.name ?? SHARE_LABEL_LOWER[type];
+}
+
+// El broadcast "${table}:changed" (sin id) solo refresca listados de
+// sidebar. BoardView/NotesView/ChatView escuchan el evento puntual del
+// recurso abierto (boardId/noteId/channelId) — sin esto, alguien mirando el
+// recurso justo cuando lo comparten/quitan/invitan no se entera en vivo.
+function broadcastResourceChanged(type: ShareType, id: number) {
+  if (type === 'board') broadcast({ type: 'board:changed', boardId: id });
+  else if (type === 'note') broadcast({ type: 'notes:changed', noteId: id });
+  else broadcast({ type: 'chat:changed', channelId: id });
+}
+
+type InviteResult = { ok: true; inviteId: number } | { ok: false; reason: string; code?: string };
+
+// Núcleo de "invitar a colaborar": lo usan tanto el endpoint por-recurso
+// como el de compartir todo con una conexión. No responde HTTP directamente
+// (a diferencia de withinLimit) para que el llamador decida qué hacer con
+// un fallo puntual — abortar (un solo recurso) o solo contarlo y seguir
+// (compartir todo).
+async function createResourceInvite(type: ShareType, id: number, ownerId: number,
+  target: { id: number; email: string | null; username: string }, role: 'editor' | 'viewer' = 'editor'): Promise<InviteResult> {
+  if (target.id === ownerId) return { ok: false, reason: 'Ya eres el dueño de este recurso' };
+  if (!target.email) return { ok: false, reason: `@${target.username} no tiene un email configurado, no se le puede invitar` };
+
+  const alreadyShared = await get('SELECT 1 FROM resource_shares WHERE resource_type = $1 AND resource_id = $2 AND user_id = $3', [type, id, target.id]);
+  if (alreadyShared) return { ok: false, reason: `@${target.username} ya es colaborador` };
+
+  // Cupo Free de colaboradores por canal (cuenta aceptados + pendientes,
+  // así no se lo puede saltear mandando invitaciones de más)
+  const alreadyInvited = await get('SELECT 1 FROM resource_invites WHERE resource_type = $1 AND resource_id = $2 AND invited_user_id = $3', [type, id, target.id]);
+  if (!alreadyInvited && type === 'channel' && (await userPlan(ownerId)) !== 'premium') {
+    const countRow = await get<{ n: number }>(`SELECT (
+      (SELECT COUNT(*)::int FROM resource_shares WHERE resource_type = $1 AND resource_id = $2) +
+      (SELECT COUNT(*)::int FROM resource_invites WHERE resource_type = $1 AND resource_id = $2)
+    ) AS n`, [type, id]);
+    if ((countRow?.n ?? 0) >= FREE_LIMITS.channelCollaborators) {
+      return {
+        ok: false, code: 'limit_reached',
+        reason: `El plan Free permite hasta ${FREE_LIMITS.channelCollaborators} colaboradores por canal. Pasa a Premium para seguir creando.`,
+      };
+    }
+  }
+
+  const invite = await get<{ id: number }>(`
+    INSERT INTO resource_invites (resource_type, resource_id, owner_id, invited_user_id, role) VALUES ($1, $2, $3, $4, $5)
+    ON CONFLICT (resource_type, resource_id, invited_user_id)
+    DO UPDATE SET created_at = to_char(now() at time zone 'utc', 'YYYY-MM-DD HH24:MI:SS'), role = $5
+    RETURNING id
+  `, [type, id, ownerId, target.id, role]);
+
+  const [inviter, resourceName] = await Promise.all([
+    get<{ username: string }>('SELECT username FROM users WHERE id = $1', [ownerId]),
+    resourceDisplayName(type, id),
+  ]);
+  sendMail(target.email, `@${inviter!.username} te invitó a colaborar en QuarryHQ`, inviteHtml(invite!.id, inviter!.username, type, resourceName))
+    .catch((err) => console.error('Error enviando invitación:', err));
+
+  broadcast({ type: 'invites:changed', userId: target.id });
+  broadcastResourceChanged(type, id); // por si el dueño tiene el modal Compartir abierto
+  return { ok: true, inviteId: invite!.id };
+}
 
 function registerShareRoutes(type: ShareType, table: string) {
   app.get(`/api/${table}/:id/shares`, requireAuth, h(async (req: AuthedRequest, res) => {
     const id = Number(req.params.id);
     if (!(await hasResourceAccess(type, id, req.userId!))) return res.status(404).json({ error: `${SHARE_LABEL[type]} no encontrado` });
     const shares = await all(`
-      SELECT users.id, users.username FROM resource_shares
+      SELECT users.id, users.username, resource_shares.role FROM resource_shares
       JOIN users ON users.id = resource_shares.user_id
       WHERE resource_shares.resource_type = $1 AND resource_shares.resource_id = $2 ORDER BY users.username
     `, [type, id]);
-    res.json({ shares, ownerId: await resourceOwnerId(type, id) });
+    const pending = await all(`
+      SELECT users.id, users.username, resource_invites.role FROM resource_invites
+      JOIN users ON users.id = resource_invites.invited_user_id
+      WHERE resource_invites.resource_type = $1 AND resource_invites.resource_id = $2 ORDER BY users.username
+    `, [type, id]);
+    res.json({ shares, pending, ownerId: await resourceOwnerId(type, id) });
   }));
 
   app.post(`/api/${table}/:id/shares`, requireAuth, h(async (req: AuthedRequest, res) => {
@@ -1576,12 +1854,23 @@ function registerShareRoutes(type: ShareType, table: string) {
     if (!(await isResourceOwner(type, id, req.userId!))) return res.status(404).json({ error: `${SHARE_LABEL[type]} no encontrado` });
     const username = (req.body?.username ?? '').trim();
     if (!username) return res.status(400).json({ error: 'Usuario requerido' });
-    const target = await get<{ id: number }>('SELECT id FROM users WHERE username = $1', [username]);
+    const role = req.body?.role === 'viewer' ? 'viewer' : 'editor';
+    const target = await get<{ id: number; email: string | null; username: string }>('SELECT id, email, username FROM users WHERE username = $1', [username]);
     if (!target) return res.status(404).json({ error: `No existe el usuario "${username}"` });
-    if (target.id === req.userId) return res.status(400).json({ error: 'Ya eres el dueño de este recurso' });
-    await run('INSERT INTO resource_shares (resource_type, resource_id, owner_id, user_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING',
-      [type, id, req.userId!, target.id]);
-    broadcast({ type: `${table}:changed` });
+
+    const result = await createResourceInvite(type, id, req.userId!, target, role);
+    if (!result.ok) return res.status(result.code === 'limit_reached' ? 403 : 400).json({ error: result.reason, code: result.code });
+    res.json({ ok: true, pending: true });
+  }));
+
+  // Cambia el rol de un colaborador ya aceptado (editor <-> viewer). Solo el dueño.
+  app.patch(`/api/${table}/:id/shares/:userId`, requireAuth, h(async (req: AuthedRequest, res) => {
+    const id = Number(req.params.id);
+    const targetUserId = Number(req.params.userId);
+    if (!(await isResourceOwner(type, id, req.userId!))) return res.status(404).json({ error: `${SHARE_LABEL[type]} no encontrado` });
+    const role = req.body?.role === 'viewer' ? 'viewer' : 'editor';
+    await run('UPDATE resource_shares SET role = $1 WHERE resource_type = $2 AND resource_id = $3 AND user_id = $4', [role, type, id, targetUserId]);
+    broadcastResourceChanged(type, id);
     res.json({ ok: true });
   }));
 
@@ -1591,13 +1880,150 @@ function registerShareRoutes(type: ShareType, table: string) {
     const isOwner = await isResourceOwner(type, id, req.userId!);
     if (!isOwner && targetUserId !== req.userId) return res.status(404).json({ error: `${SHARE_LABEL[type]} no encontrado` });
     await run('DELETE FROM resource_shares WHERE resource_type = $1 AND resource_id = $2 AND user_id = $3', [type, id, targetUserId]);
+    await run('DELETE FROM resource_invites WHERE resource_type = $1 AND resource_id = $2 AND invited_user_id = $3', [type, id, targetUserId]);
+    if (type === 'board') {
+      // Los canales de discusión de las tarjetas de este tablero se
+      // compartieron automáticamente con este colaborador: al sacarlo del
+      // tablero, se le saca también de esos canales (si no, se quedaría
+      // leyendo/escribiendo ahí después de perder el resto del acceso).
+      await run(`
+        DELETE FROM resource_shares WHERE resource_type = 'channel' AND user_id = $1 AND resource_id IN (
+          SELECT links.target_id FROM links
+          JOIN cards ON cards.id = links.source_id AND links.source_type = 'card'
+          JOIN lists ON lists.id = cards.list_id
+          WHERE lists.board_id = $2 AND links.target_type = 'channel' AND links.kind = 'discussion'
+        )
+      `, [targetUserId, id]);
+    }
     broadcast({ type: `${table}:changed` });
+    broadcast({ type: 'invites:changed', userId: targetUserId });
+    broadcastResourceChanged(type, id);
     res.json({ ok: true });
   }));
 }
 registerShareRoutes('board', 'boards');
 registerShareRoutes('note', 'notes');
 registerShareRoutes('channel', 'channels');
+
+// ---------- Invitaciones pendientes: bandeja del invitado ----------
+app.get('/api/invites/mine', requireAuth, h(async (req: AuthedRequest, res) => {
+  const invites = await all(`
+    SELECT resource_invites.id, resource_invites.resource_type, resource_invites.resource_id,
+      owner.username AS owner_username, resource_invites.created_at, resource_invites.role,
+      COALESCE(boards.name, notes.title, channels.name) AS resource_name
+    FROM resource_invites
+    JOIN users owner ON owner.id = resource_invites.owner_id
+    LEFT JOIN boards ON resource_invites.resource_type = 'board' AND boards.id = resource_invites.resource_id
+    LEFT JOIN notes ON resource_invites.resource_type = 'note' AND notes.id = resource_invites.resource_id
+    LEFT JOIN channels ON resource_invites.resource_type = 'channel' AND channels.id = resource_invites.resource_id
+    WHERE resource_invites.invited_user_id = $1
+    ORDER BY resource_invites.created_at DESC
+  `, [req.userId!]);
+  res.json({ invites });
+}));
+
+app.post('/api/invites/:id/accept', requireAuth, h(async (req: AuthedRequest, res) => {
+  const invite = await get<{ id: number; resource_type: ShareType; resource_id: number; owner_id: number; invited_user_id: number; role: string }>(
+    'SELECT * FROM resource_invites WHERE id = $1', [Number(req.params.id)]);
+  if (!invite || invite.invited_user_id !== req.userId) return res.status(404).json({ error: 'Invitación no encontrada' });
+  await run('INSERT INTO resource_shares (resource_type, resource_id, owner_id, user_id, role) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING',
+    [invite.resource_type, invite.resource_id, invite.owner_id, req.userId!, invite.role]);
+  await run('DELETE FROM resource_invites WHERE id = $1', [invite.id]);
+  broadcast({ type: `${SHARE_TABLE[invite.resource_type]}:changed` });
+  broadcast({ type: 'invites:changed', userId: req.userId! });
+  broadcastResourceChanged(invite.resource_type, invite.resource_id);
+  res.json({ ok: true, resource_type: invite.resource_type, resource_id: invite.resource_id });
+}));
+
+app.post('/api/invites/:id/decline', requireAuth, h(async (req: AuthedRequest, res) => {
+  const invite = await get<{ invited_user_id: number }>('SELECT invited_user_id FROM resource_invites WHERE id = $1', [Number(req.params.id)]);
+  if (!invite || invite.invited_user_id !== req.userId) return res.status(404).json({ error: 'Invitación no encontrada' });
+  await run('DELETE FROM resource_invites WHERE id = $1', [Number(req.params.id)]);
+  broadcast({ type: 'invites:changed', userId: req.userId! });
+  res.json({ ok: true });
+}));
+
+// ---------- Notificaciones (hoy solo @menciones) ----------
+app.get('/api/notifications/mine', requireAuth, h(async (req: AuthedRequest, res) => {
+  const notifications = await all(`
+    SELECT notifications.id, notifications.kind, notifications.resource_type, notifications.resource_id,
+      notifications.excerpt, notifications.message_id, notifications.read, notifications.created_at,
+      actor.username AS actor_username,
+      COALESCE(boards.name, notes.title, channels.name) AS resource_name
+    FROM notifications
+    JOIN users actor ON actor.id = notifications.actor_id
+    LEFT JOIN boards ON notifications.resource_type = 'board' AND boards.id = notifications.resource_id
+    LEFT JOIN notes ON notifications.resource_type = 'note' AND notes.id = notifications.resource_id
+    LEFT JOIN channels ON notifications.resource_type = 'channel' AND channels.id = notifications.resource_id
+    WHERE notifications.user_id = $1 ORDER BY notifications.id DESC LIMIT 50
+  `, [req.userId!]);
+  res.json({ notifications });
+}));
+
+app.post('/api/notifications/:id/read', requireAuth, h(async (req: AuthedRequest, res) => {
+  await run('UPDATE notifications SET read = 1 WHERE id = $1 AND user_id = $2', [Number(req.params.id), req.userId!]);
+  res.json({ ok: true });
+}));
+
+app.post('/api/notifications/read-all', requireAuth, h(async (req: AuthedRequest, res) => {
+  await run('UPDATE notifications SET read = 1 WHERE user_id = $1 AND read = 0', [req.userId!]);
+  res.json({ ok: true });
+}));
+
+// ---------- Conexiones: agenda personal para compartir más rápido ----------
+// Agregar una conexión no da acceso a nada por sí sola — solo agiliza
+// compartir (todo o de a uno) reutilizando createResourceInvite de arriba.
+app.get('/api/connections', requireAuth, h(async (req: AuthedRequest, res) => {
+  const connections = await all(`
+    SELECT users.id, users.username FROM user_connections
+    JOIN users ON users.id = user_connections.connected_user_id
+    WHERE user_connections.owner_id = $1 ORDER BY users.username
+  `, [req.userId!]);
+  res.json({ connections });
+}));
+
+app.post('/api/connections', requireAuth, h(async (req: AuthedRequest, res) => {
+  const username = (req.body?.username ?? '').trim();
+  if (!username) return res.status(400).json({ error: 'Usuario requerido' });
+  const target = await get<{ id: number }>('SELECT id FROM users WHERE username = $1', [username]);
+  if (!target) return res.status(404).json({ error: `No existe el usuario "${username}"` });
+  if (target.id === req.userId) return res.status(400).json({ error: 'No podés conectarte con vos mismo' });
+  await run('INSERT INTO user_connections (owner_id, connected_user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [req.userId!, target.id]);
+  res.json({ ok: true });
+}));
+
+app.delete('/api/connections/:userId', requireAuth, h(async (req: AuthedRequest, res) => {
+  await run('DELETE FROM user_connections WHERE owner_id = $1 AND connected_user_id = $2', [req.userId!, Number(req.params.userId)]);
+  res.json({ ok: true });
+}));
+
+// Comparte TODOS los tableros/notas/canales propios con una conexión de una
+// sola vez; cada uno igual queda pendiente hasta que la conexión lo acepte
+// (mismo flujo y mismos límites que compartir de a uno).
+app.post('/api/connections/:userId/share-all', requireAuth, h(async (req: AuthedRequest, res) => {
+  const target = await get<{ id: number; email: string | null; username: string }>('SELECT id, email, username FROM users WHERE id = $1', [Number(req.params.userId)]);
+  if (!target) return res.status(404).json({ error: 'Usuario no encontrado' });
+  const role = req.body?.role === 'viewer' ? 'viewer' : 'editor';
+
+  const [boards, notes, channels] = await Promise.all([
+    all<{ id: number }>('SELECT id FROM boards WHERE owner_id = $1', [req.userId!]),
+    all<{ id: number }>('SELECT id FROM notes WHERE owner_id = $1', [req.userId!]),
+    all<{ id: number }>('SELECT id FROM channels WHERE owner_id = $1', [req.userId!]),
+  ]);
+  const jobs: { type: ShareType; id: number }[] = [
+    ...boards.map((b) => ({ type: 'board' as ShareType, id: b.id })),
+    ...notes.map((n) => ({ type: 'note' as ShareType, id: n.id })),
+    ...channels.map((c) => ({ type: 'channel' as ShareType, id: c.id })),
+  ];
+
+  let invited = 0;
+  const skipped: string[] = [];
+  for (const job of jobs) {
+    const result = await createResourceInvite(job.type, job.id, req.userId!, target, role);
+    if (result.ok) invited++; else skipped.push(result.reason);
+  }
+  res.json({ ok: true, invited, total: jobs.length, skipped });
+}));
 
 // Health check para balanceadores y monitoreo; confirma que la base responde.
 // Debe registrarse antes del catch-all de estáticos.

@@ -6,10 +6,11 @@ import { emptyState } from '../ui';
 
 type SortKey = 'title' | 'list' | 'due_date' | 'completed';
 
-export default function TableView({ lists, onOpenCard, onChanged }: {
+export default function TableView({ lists, onOpenCard, onChanged, isViewer }: {
   lists: List[];
   onOpenCard: (id: number) => void;
   onChanged: () => void;
+  isViewer?: boolean;
 }) {
   const [sortKey, setSortKey] = useState<SortKey>('list');
   const [asc, setAsc] = useState(true);
@@ -32,6 +33,7 @@ export default function TableView({ lists, onOpenCard, onChanged }: {
 
   async function toggleCompleted(card: Card, e: React.MouseEvent) {
     e.stopPropagation();
+    if (isViewer) return;
     await patch(`/api/cards/${card.id}`, { completed: !card.completed });
     onChanged();
   }

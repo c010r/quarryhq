@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { get, post, setToken, getToken, connectWs, disconnectWs, onWsEvent, isPlanError } from './api';
-import type { Board, Channel, NoteMeta, User } from './types';
+import type { Board, Channel, NoteMeta, NotificationEntry, PendingInvite, User } from './types';
 import BoardView from './views/BoardView';
 import NotesView from './views/NotesView';
 import ChatView from './views/ChatView';
@@ -8,6 +8,9 @@ import GraphView from './views/GraphView';
 import SearchPalette from './views/SearchPalette';
 import UpgradeModal from './views/UpgradeModal';
 import AppearanceModal from './views/AppearanceModal';
+import InvitesModal from './views/InvitesModal';
+import NotificationsModal from './views/NotificationsModal';
+import ConnectionsModal from './views/ConnectionsModal';
 import AdminView from './views/AdminView';
 import { btnPrimary, btnGhost, emptyState, inputBase, sideHeading, sideIcon, sideItem, sideLabel } from './ui';
 import { alertDialog, promptDialog } from './dialog';
@@ -286,7 +289,33 @@ function Workspace({ user, onLogout, onUserChanged }: {
   // null = modal cerrado; '' = abierto sin mensaje; texto = abierto por un bloqueo
   const [upgradeMsg, setUpgradeMsg] = useState<string | null>(null);
   const [showAppearance, setShowAppearance] = useState(false);
+  const [showConnections, setShowConnections] = useState(false);
+  const [invites, setInvites] = useState<PendingInvite[]>([]);
+  const [showInvites, setShowInvites] = useState(false);
+  const [notifications, setNotifications] = useState<NotificationEntry[]>([]);
+  const [showNotifications, setShowNotifications] = useState(false);
   const isPremium = user.plan === 'premium';
+  const unreadNotifications = notifications.filter((n) => !n.read).length;
+
+  const refreshInvites = useCallback(async () => {
+    const { invites } = await get<{ invites: PendingInvite[] }>('/api/invites/mine');
+    setInvites(invites);
+  }, []);
+
+  const refreshNotifications = useCallback(async () => {
+    const { notifications } = await get<{ notifications: NotificationEntry[] }>('/api/notifications/mine');
+    setNotifications(notifications);
+  }, []);
+
+  useEffect(() => {
+    refreshInvites();
+    refreshNotifications();
+    const off = onWsEvent((event) => {
+      if (event.type === 'invites:changed' && event.userId === user.id) refreshInvites();
+      if (event.type === 'notifications:changed' && event.userId === user.id) refreshNotifications();
+    });
+    return off;
+  }, [refreshInvites, refreshNotifications, user.id]);
 
   // Cualquier 403 de plan (premium_required / limit_reached) abre el modal
   useEffect(() => {
@@ -338,6 +367,21 @@ function Workspace({ user, onLogout, onUserChanged }: {
       post<{ note: { id: number } }>('/api/notes/resolve', { title: route[1] })
         .then(({ note }) => navigate(`/notes/${note.id}`))
         .catch(() => navigate('/notes'));
+    }
+  }, [route.join('/')]);
+
+  // #/invite/{id} → viene de un link de correo; acepta la invitación (ya
+  // logueado como el usuario invitado) y redirige al recurso
+  useEffect(() => {
+    if (route[0] === 'invite' && route[1]) {
+      post<{ resource_type: string; resource_id: number }>(`/api/invites/${route[1]}/accept`)
+        .then(({ resource_type, resource_id }) => {
+          refreshSidebar();
+          alertDialog('¡Listo! Ahora colaborás en este recurso.');
+          navigate(resource_type === 'board' ? `/board/${resource_id}`
+            : resource_type === 'note' ? `/notes/${resource_id}` : `/chat/${resource_id}`);
+        })
+        .catch((err) => { alertDialog(err.message); navigate(''); });
     }
   }, [route.join('/')]);
 
@@ -402,8 +446,16 @@ function Workspace({ user, onLogout, onUserChanged }: {
         <button onClick={() => setMenuOpen(true)} aria-label="Abrir menú"
           className="rounded-lg border border-edge bg-ink px-2.5 py-1.5 text-[15px] leading-none text-dim">☰</button>
         <span className="font-display text-[15px] font-bold tracking-tight">QuarryHQ</span>
+        {unreadNotifications > 0 && (
+          <button onClick={() => setShowNotifications(true)} aria-label="Notificaciones"
+            className="ml-auto rounded-lg border border-accent/40 bg-accent/10 px-2.5 py-1.5 text-[13px] text-accent">🔔 {unreadNotifications}</button>
+        )}
+        {invites.length > 0 && (
+          <button onClick={() => setShowInvites(true)} aria-label="Invitaciones"
+            className={`${unreadNotifications > 0 ? '' : 'ml-auto'} rounded-lg border border-accent/40 bg-accent/10 px-2.5 py-1.5 text-[13px] text-accent`}>📬 {invites.length}</button>
+        )}
         <button onClick={() => setPaletteOpen(true)} aria-label="Buscar"
-          className="ml-auto rounded-lg border border-edge bg-ink px-2.5 py-1.5 text-[13px] text-dim">🔍</button>
+          className={`${invites.length > 0 || unreadNotifications > 0 ? '' : 'ml-auto'} rounded-lg border border-edge bg-ink px-2.5 py-1.5 text-[13px] text-dim`}>🔍</button>
       </div>
 
       {menuOpen && <div className="fixed inset-0 z-40 bg-black/60 md:hidden" onClick={() => setMenuOpen(false)} />}
@@ -420,11 +472,23 @@ function Workspace({ user, onLogout, onUserChanged }: {
         </div>
         <button
           onClick={() => setPaletteOpen(true)}
-          className="m-3 flex items-center justify-between rounded-lg border border-edge bg-ink px-3 py-2 text-left text-[13px] text-dim transition-colors hover:border-accent"
+          className="mx-3 mt-3 flex items-center justify-between rounded-lg border border-edge bg-ink px-3 py-2 text-left text-[13px] text-dim transition-colors hover:border-accent"
         >
           Buscar en todo…
           <kbd className="rounded border border-edge bg-raised px-1.5 py-px font-sans text-[11px]">Ctrl K</kbd>
         </button>
+        {unreadNotifications > 0 && (
+          <button onClick={() => setShowNotifications(true)}
+            className="mx-3 mb-1.5 mt-1.5 flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-3 py-1.5 text-left text-[13px] font-semibold text-accent transition hover:bg-accent/15">
+            🔔 {unreadNotifications} {unreadNotifications === 1 ? 'notificación nueva' : 'notificaciones nuevas'}
+          </button>
+        )}
+        {invites.length > 0 && (
+          <button onClick={() => setShowInvites(true)}
+            className="mx-3 mb-3 mt-1.5 flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-3 py-1.5 text-left text-[13px] font-semibold text-accent transition hover:bg-accent/15">
+            📬 {invites.length} {invites.length === 1 ? 'invitación pendiente' : 'invitaciones pendientes'}
+          </button>
+        )}
 
         <div className="px-3 py-1.5">
           <div className={sideHeading}>Tableros {newButton(createBoard, 'Nuevo tablero')}</div>
@@ -472,6 +536,11 @@ function Workspace({ user, onLogout, onUserChanged }: {
 
         <div className="mt-auto">
           <div className="px-3 pb-1">
+            <button
+              className="mb-1.5 flex w-full items-center justify-center gap-1.5 rounded-lg border border-edge bg-panel px-3 py-1.5 text-[12px] text-dim transition-colors hover:border-accent hover:text-fg"
+              onClick={() => setShowConnections(true)}>
+              🔗 Conexiones
+            </button>
             <button
               className="mb-1.5 flex w-full items-center justify-center gap-1.5 rounded-lg border border-edge bg-panel px-3 py-1.5 text-[12px] text-dim transition-colors hover:border-accent hover:text-fg"
               onClick={() => setShowAppearance(true)}>
@@ -530,6 +599,13 @@ function Workspace({ user, onLogout, onUserChanged }: {
           onChanged={onUserChanged}
           onClose={() => setShowAppearance(false)} />
       )}
+      {showInvites && (
+        <InvitesModal invites={invites} onChanged={refreshInvites} onClose={() => setShowInvites(false)} />
+      )}
+      {showNotifications && (
+        <NotificationsModal notifications={notifications} onChanged={refreshNotifications} onClose={() => setShowNotifications(false)} />
+      )}
+      {showConnections && <ConnectionsModal onClose={() => setShowConnections(false)} />}
     </div>
   );
 }

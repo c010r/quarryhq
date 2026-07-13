@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { get, post, patch, del, onWsEvent, notifyPlanBlock } from '../api';
+import { get, post, patch, del, onWsEvent, notifyPlanBlock, sendWs } from '../api';
 import type { Channel, Message, Reaction, ScheduledMessage, User } from '../types';
 import { renderInlineMarkdown } from '../markdown';
 import { navigate } from '../App';
 import { avatarColor, btnSmall, headerBtn, emptyState, mainHeader, modalClose, viewTitle } from '../ui';
 import { alertDialog, confirmDialog } from '../dialog';
 import ShareModal from './ShareModal';
+import PresenceAvatars, { type PresenceViewer } from './PresenceAvatars';
 
 const QUICK_EMOJIS = ['👍', '❤️', '✅', '🎉', '👀'];
 
@@ -22,11 +23,12 @@ function onWikilinkClick(e: React.MouseEvent) {
   }
 }
 
-function MessageItem({ message, user, reactions, inThread, onReact, onOpenThread, onPin, onEdit, onDelete }: {
+function MessageItem({ message, user, reactions, inThread, isViewer, onReact, onOpenThread, onPin, onEdit, onDelete }: {
   message: Message;
   user: User;
   reactions: Reaction[];
   inThread?: boolean;
+  isViewer?: boolean;
   onReact: (id: number, emoji: string) => void;
   onOpenThread?: (id: number) => void;
   onPin: (id: number) => void;
@@ -48,15 +50,17 @@ function MessageItem({ message, user, reactions, inThread, onReact, onOpenThread
   return (
     <div className="group relative flex gap-3 rounded-lg px-2 py-1.5 transition-colors hover:bg-panel">
       <div className="absolute -top-3 right-2 hidden gap-0.5 rounded-lg border border-edge bg-raised p-0.5 shadow-lg shadow-black/30 group-hover:flex">
-        {QUICK_EMOJIS.slice(0, 3).map((emoji) => (
+        {!isViewer && QUICK_EMOJIS.slice(0, 3).map((emoji) => (
           <button key={emoji} className={actionBtn} onClick={() => onReact(message.id, emoji)} title={`Reaccionar ${emoji}`}>{emoji}</button>
         ))}
         {onOpenThread && <button className={actionBtn} onClick={() => onOpenThread(message.id)} title="Responder en hilo">💬</button>}
-        <button className={actionBtn} onClick={() => onPin(message.id)} title={message.pinned ? 'Desfijar' : 'Fijar mensaje'}>
-          {message.pinned ? '📌✕' : '📌'}
-        </button>
-        {mine && <button className={actionBtn} onClick={() => { setDraft(message.content); setEditing(true); }} title="Editar">✏️</button>}
-        {mine && <button className={actionBtn} onClick={() => onDelete(message.id)} title="Eliminar">🗑</button>}
+        {!isViewer && (
+          <button className={actionBtn} onClick={() => onPin(message.id)} title={message.pinned ? 'Desfijar' : 'Fijar mensaje'}>
+            {message.pinned ? '📌✕' : '📌'}
+          </button>
+        )}
+        {mine && !isViewer && <button className={actionBtn} onClick={() => { setDraft(message.content); setEditing(true); }} title="Editar">✏️</button>}
+        {mine && !isViewer && <button className={actionBtn} onClick={() => onDelete(message.id)} title="Eliminar">🗑</button>}
       </div>
       <div className="flex h-8.5 w-8.5 shrink-0 items-center justify-center rounded-lg text-sm font-bold text-ink"
         style={{ background: avatarColor(message.username) }}>
@@ -83,10 +87,10 @@ function MessageItem({ message, user, reactions, inThread, onReact, onOpenThread
         {reactions.length > 0 && (
           <div className="mt-1 flex flex-wrap gap-1.5">
             {reactions.map((r) => (
-              <button key={r.emoji}
+              <button key={r.emoji} disabled={isViewer}
                 className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs transition-colors ${
                   r.mine ? 'border-chat bg-chat/10' : 'border-edge bg-raised hover:border-chat'
-                }`}
+                } disabled:cursor-default`}
                 onClick={() => onReact(message.id, r.emoji)}>
                 {r.emoji} {r.count}
               </button>
@@ -119,7 +123,18 @@ export default function ChatView({ channelId, user, isPremium }: { channelId: nu
   const [scheduled, setScheduled] = useState<ScheduledMessage[]>([]);
   const [showScheduled, setShowScheduled] = useState(false);
   const [showShare, setShowShare] = useState(false);
+  const isViewer = channel?.myRole === 'viewer';
+  const [viewers, setViewers] = useState<PresenceViewer[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Presencia: le avisa al resto quién está mirando este canal ahora
+  useEffect(() => {
+    sendWs({ type: 'presence:join', resourceType: 'channel', resourceId: channelId });
+    return () => sendWs({ type: 'presence:leave' });
+  }, [channelId]);
+  useEffect(() => onWsEvent((e) => {
+    if (e.type === 'presence:update' && e.resourceType === 'channel' && e.resourceId === channelId) setViewers(e.viewers);
+  }), [channelId]);
 
   const load = useCallback(async () => {
     try {
@@ -232,6 +247,8 @@ export default function ChatView({ channelId, user, isPremium }: { channelId: nu
       <div className={mainHeader}>
         <h2 className={viewTitle + " truncate"}><span className="text-chat">#</span> {channel.name}</h2>
         <span className="text-[13px] text-dim">{messages.length} mensajes</span>
+        {channel.shared && <span className="text-[12px] text-dim">🤝 compartido por @{channel.owner_username}</span>}
+        <PresenceAvatars viewers={viewers} currentUserId={user.id} />
         <button className={`${headerBtn} sm:ml-auto`} onClick={() => setShowShare(true)}>🤝 Compartir</button>
       </div>
 
@@ -273,13 +290,18 @@ export default function ChatView({ channelId, user, isPremium }: { channelId: nu
               </div>
             )}
             {messages.map((m) => (
-              <MessageItem key={m.id} message={m} user={user} reactions={reactionsFor(m.id)}
+              <MessageItem key={m.id} message={m} user={user} reactions={reactionsFor(m.id)} isViewer={isViewer}
                 onReact={react} onOpenThread={setThreadId} onPin={pin}
                 onEdit={editMessage} onDelete={deleteMessage} />
             ))}
           </div>
 
           <div className="shrink-0 px-3 pb-3 pt-3 sm:px-5 sm:pb-4.5">
+            {isViewer ? (
+              <p className="rounded-xl border border-edge bg-panel px-3 py-2.5 text-center text-[13px] text-dim">
+                👁 Solo lectura — no podés escribir en este canal.
+              </p>
+            ) : (
             <form onSubmit={send} className="relative flex flex-wrap gap-2 rounded-xl border border-edge bg-panel p-2 transition-colors focus-within:border-chat">
               <input value={draft} onChange={(e) => setDraft(e.target.value)}
                 placeholder={`Mensaje para #${channel.name}`} autoFocus
@@ -305,6 +327,7 @@ export default function ChatView({ channelId, user, isPremium }: { channelId: nu
                 </div>
               )}
             </form>
+            )}
             <div className="mt-1.5 pl-1 text-[11.5px] text-dim">
               Usa <strong className="text-chat">[[Título de nota]]</strong> para enlazar una nota.
               {scheduled.length > 0 && (
@@ -333,27 +356,29 @@ export default function ChatView({ channelId, user, isPremium }: { channelId: nu
               <button className={modalClose} onClick={() => setThreadId(null)}>✕</button>
             </div>
             <div className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-3">
-              <MessageItem message={thread.parent} user={user} reactions={reactionsFor(thread.parent.id)}
+              <MessageItem message={thread.parent} user={user} reactions={reactionsFor(thread.parent.id)} isViewer={isViewer}
                 inThread onReact={react} onPin={pin} onEdit={editMessage} onDelete={deleteMessage} />
               <div className="my-2 border-t border-edge pt-1 text-xs text-dim">
                 {thread.replies.length} {thread.replies.length === 1 ? 'respuesta' : 'respuestas'}
               </div>
               {thread.replies.map((r) => (
-                <MessageItem key={r.id} message={r} user={user} reactions={reactionsFor(r.id)}
+                <MessageItem key={r.id} message={r} user={user} reactions={reactionsFor(r.id)} isViewer={isViewer}
                   inThread onReact={react} onPin={pin} onEdit={editMessage} onDelete={deleteMessage} />
               ))}
             </div>
-            <form className="flex flex-wrap gap-1.5 border-t border-edge p-3" onSubmit={sendThreadReply}>
-              <input value={threadDraft} onChange={(e) => setThreadDraft(e.target.value)}
-                placeholder="Responder en el hilo…"
-                className="min-w-0 flex-1 rounded-lg border border-edge bg-ink px-2.5 py-2 text-[13px] outline-none transition-colors focus:border-chat" />
-              <button className={btnSmall} type="submit">↩</button>
-            </form>
+            {!isViewer && (
+              <form className="flex flex-wrap gap-1.5 border-t border-edge p-3" onSubmit={sendThreadReply}>
+                <input value={threadDraft} onChange={(e) => setThreadDraft(e.target.value)}
+                  placeholder="Responder en el hilo…"
+                  className="min-w-0 flex-1 rounded-lg border border-edge bg-ink px-2.5 py-2 text-[13px] outline-none transition-colors focus:border-chat" />
+                <button className={btnSmall} type="submit">↩</button>
+              </form>
+            )}
           </div>
         )}
       </div>
       {showShare && (
-        <ShareModal type="channel" resourceId={channelId} resourceName={channel.name} currentUserId={user.id} onClose={() => setShowShare(false)} />
+        <ShareModal type="channel" resourceId={channelId} resourceName={channel.name} currentUserId={user.id} isPremium={isPremium} onClose={() => setShowShare(false)} />
       )}
     </div>
   );

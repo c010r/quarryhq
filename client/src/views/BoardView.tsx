@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { get, post, del, onWsEvent, notifyPlanBlock } from '../api';
+import { get, post, del, onWsEvent, notifyPlanBlock, sendWs } from '../api';
 import type { Board, Card, List } from '../types';
 import { LABEL_COLORS } from '../types';
 import CardModal from './CardModal';
@@ -7,6 +7,8 @@ import TableView from './TableView';
 import CalendarView from './CalendarView';
 import AutomationModal from './AutomationModal';
 import ShareModal from './ShareModal';
+import ActivityModal from './ActivityModal';
+import PresenceAvatars, { type PresenceViewer } from './PresenceAvatars';
 import { avatarColor, btnGhost, btnSmall, emptyState, headerBtn, mainHeader, viewTitle } from '../ui';
 import { confirmDialog } from '../dialog';
 
@@ -94,6 +96,8 @@ export default function BoardView({ boardId, initialCardId, isPremium, currentUs
   const [view, setView] = useState<'kanban' | 'table' | 'calendar'>('kanban');
   const [showRules, setShowRules] = useState(false);
   const [showShare, setShowShare] = useState(false);
+  const [showActivity, setShowActivity] = useState(false);
+  const [viewers, setViewers] = useState<PresenceViewer[]>([]);
 
   const load = useCallback(async () => {
     try {
@@ -108,6 +112,15 @@ export default function BoardView({ boardId, initialCardId, isPremium, currentUs
   useEffect(() => onWsEvent((e) => {
     if ((e.type === 'board:changed' && e.boardId === boardId) || e.type === 'links:changed') load();
   }), [boardId, load]);
+
+  // Presencia: le avisa al resto quién está mirando este tablero ahora
+  useEffect(() => {
+    sendWs({ type: 'presence:join', resourceType: 'board', resourceId: boardId });
+    return () => sendWs({ type: 'presence:leave' });
+  }, [boardId]);
+  useEffect(() => onWsEvent((e) => {
+    if (e.type === 'presence:update' && e.resourceType === 'board' && e.resourceId === boardId) setViewers(e.viewers);
+  }), [boardId]);
 
   async function addCard(listId: number, title: string) {
     await post('/api/cards', { list_id: listId, title });
@@ -133,6 +146,7 @@ export default function BoardView({ boardId, initialCardId, isPremium, currentUs
   }
 
   if (!board) return <div className={emptyState}>Tablero no encontrado.</div>;
+  const isViewer = board.myRole === 'viewer';
 
   const viewTab = (active: boolean) =>
     `px-3 py-1.5 text-xs transition-colors ${active ? 'bg-board/10 font-semibold text-board' : 'text-dim hover:text-fg'}`;
@@ -142,6 +156,8 @@ export default function BoardView({ boardId, initialCardId, isPremium, currentUs
       <div className={mainHeader}>
         <h2 className={viewTitle + " truncate"}><span className="text-board">▦</span> {board.name}</h2>
         <span className="text-[13px] text-dim">{lists.reduce((n, l) => n + l.cards.length, 0)} tarjetas</span>
+        {board.shared && <span className="text-[12px] text-dim">🤝 compartido por @{board.owner_username}</span>}
+        <PresenceAvatars viewers={viewers} currentUserId={currentUserId} />
         <div className="flex max-w-full overflow-x-auto rounded-lg border border-edge bg-panel sm:ml-auto">
           <button className={viewTab(view === 'kanban')} onClick={() => setView('kanban')}>▦ Tablero</button>
           <button className={viewTab(view === 'table')}
@@ -153,28 +169,32 @@ export default function BoardView({ boardId, initialCardId, isPremium, currentUs
             📅 Calendario{!isPremium && ' 🔒'}
           </button>
         </div>
-        <button className={headerBtn}
-          onClick={() => isPremium ? setShowRules(true) : notifyPlanBlock('Las automatizaciones estilo Butler son parte de Premium.')}>
-          ⚙ Automatización{!isPremium && ' 🔒'}
-        </button>
+        {!isViewer && (
+          <button className={headerBtn}
+            onClick={() => isPremium ? setShowRules(true) : notifyPlanBlock('Las automatizaciones estilo Butler son parte de Premium.')}>
+            ⚙ Automatización{!isPremium && ' 🔒'}
+          </button>
+        )}
         <button className={headerBtn} onClick={() => setShowShare(true)}>🤝 Compartir</button>
+        <button className={headerBtn} onClick={() => setShowActivity(true)}>📋 Actividad</button>
+        {isViewer && <span className="text-[12px] text-dim">👁 solo lectura</span>}
       </div>
       <div className="min-w-0 flex-1 overflow-auto">
-        {view === 'table' && <TableView lists={lists} onOpenCard={setOpenCardId} onChanged={load} />}
+        {view === 'table' && <TableView lists={lists} onOpenCard={setOpenCardId} onChanged={load} isViewer={isViewer} />}
         {view === 'calendar' && <CalendarView lists={lists} onOpenCard={setOpenCardId} />}
         {view === 'kanban' && <div className="flex min-h-full items-start gap-3 p-3 sm:gap-3.5 sm:p-4.5">
           {lists.map((list) => (
             <div key={list.id}
               className="flex max-h-[calc(100dvh-120px)] w-[min(17.5rem,calc(100dvw-2rem))] shrink-0 flex-col rounded-xl border border-edge bg-panel md:max-h-[calc(100dvh-110px)]"
-              onDragOver={(e) => e.preventDefault()}
+              onDragOver={(e) => !isViewer && e.preventDefault()}
               onDrop={(e) => {
                 e.preventDefault();
-                if (dragging && dropTarget === null) moveCard(dragging, list.id, list.cards.length);
+                if (!isViewer && dragging && dropTarget === null) moveCard(dragging, list.id, list.cards.length);
                 setDragging(null); setDropTarget(null);
               }}>
               <div className="flex items-center justify-between px-3.5 py-3 text-[13.5px] font-semibold">
                 <span>{list.name} <span className="font-normal text-dim">· {list.cards.length}</span></span>
-                <button className={btnGhost} onClick={() => removeList(list)} title="Eliminar lista">✕</button>
+                {!isViewer && <button className={btnGhost} onClick={() => removeList(list)} title="Eliminar lista">✕</button>}
               </div>
               <div className="flex min-h-8 flex-col gap-2 overflow-y-auto px-2.5 pb-2.5 pt-1">
                 {list.cards.map((card, i) => {
@@ -182,13 +202,13 @@ export default function BoardView({ boardId, initialCardId, isPremium, currentUs
                   const zoneKey = `${list.id}:${i}`;
                   return (
                     <div key={card.id}>
-                      <DropZone active={!!dragging && dragging.id !== card.id} over={dropTarget === zoneKey}
+                      <DropZone active={!isViewer && !!dragging && dragging.id !== card.id} over={dropTarget === zoneKey}
                         onDragOver={() => setDropTarget(zoneKey)}
                         onDragLeave={() => setDropTarget(null)}
                         onDrop={() => { if (dragging) moveCard(dragging, list.id, i); setDragging(null); setDropTarget(null); }} />
                       <div
-                        className={`cursor-grab rounded-lg border border-edge bg-raised px-3 py-2.5 transition-colors hover:border-board ${dragging?.id === card.id ? 'opacity-40' : ''}`}
-                        draggable
+                        className={`rounded-lg border border-edge bg-raised px-3 py-2.5 transition-colors hover:border-board ${isViewer ? 'cursor-pointer' : 'cursor-grab'} ${dragging?.id === card.id ? 'opacity-40' : ''}`}
+                        draggable={!isViewer}
                         onDragStart={() => setDragging(card)}
                         onDragEnd={() => { setDragging(null); setDropTarget(null); }}
                         onClick={() => setOpenCardId(card.id)}>
@@ -206,20 +226,20 @@ export default function BoardView({ boardId, initialCardId, isPremium, currentUs
                     </div>
                   );
                 })}
-                <DropZone active={!!dragging} over={dropTarget === `${list.id}:end`}
+                <DropZone active={!isViewer && !!dragging} over={dropTarget === `${list.id}:end`}
                   onDragOver={() => setDropTarget(`${list.id}:end`)}
                   onDragLeave={() => setDropTarget(null)}
                   onDrop={() => { if (dragging) moveCard(dragging, list.id, list.cards.length); setDragging(null); setDropTarget(null); }} />
               </div>
-              {addingCardTo === list.id ? (
+              {!isViewer && (addingCardTo === list.id ? (
                 <AddForm placeholder="Título de la tarjeta…" onSubmit={(t) => addCard(list.id, t)} onCancel={() => setAddingCardTo(null)} />
               ) : (
                 <button className="px-3.5 pb-3 pt-2 text-left text-[13px] text-dim transition-colors hover:text-fg"
                   onClick={() => setAddingCardTo(list.id)}>+ Añadir tarjeta</button>
-              )}
+              ))}
             </div>
           ))}
-          {addingList ? (
+          {isViewer ? null : addingList ? (
             <div className="w-[min(17.5rem,calc(100dvw-2rem))] shrink-0 rounded-xl border border-edge bg-panel pt-2">
               <AddForm placeholder="Nombre de la lista…" onSubmit={addList} onCancel={() => setAddingList(false)} />
             </div>
@@ -231,12 +251,13 @@ export default function BoardView({ boardId, initialCardId, isPremium, currentUs
         </div>}
       </div>
       {openCardId !== null && (
-        <CardModal cardId={openCardId} onClose={() => { setOpenCardId(null); load(); }} />
+        <CardModal cardId={openCardId} isViewer={isViewer} onClose={() => { setOpenCardId(null); load(); }} />
       )}
       {showRules && <AutomationModal boardId={boardId} lists={lists} onClose={() => setShowRules(false)} />}
       {showShare && (
-        <ShareModal type="board" resourceId={boardId} resourceName={board.name} currentUserId={currentUserId} onClose={() => setShowShare(false)} />
+        <ShareModal type="board" resourceId={boardId} resourceName={board.name} currentUserId={currentUserId} isPremium={isPremium} onClose={() => setShowShare(false)} />
       )}
+      {showActivity && <ActivityModal boardId={boardId} onClose={() => setShowActivity(false)} />}
     </>
   );
 }

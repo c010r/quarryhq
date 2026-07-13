@@ -252,6 +252,91 @@ export async function initSchema() {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS resource_shares_unique_idx ON resource_shares(resource_type, resource_id, user_id);
     CREATE INDEX IF NOT EXISTS resource_shares_user_idx ON resource_shares(user_id);
+    -- 'editor' (todo lo que puede hacer el dueño en el contenido) o 'viewer'
+    -- (solo lectura). Default 'editor' para no cambiarle el comportamiento
+    -- a los colaboradores que ya existían antes de este campo.
+    ALTER TABLE resource_shares ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'editor';
+
+    -- Invitaciones pendientes: compartir ya no agrega al instante, manda un
+    -- correo y espera que el invitado acepte. No lleva token secreto porque
+    -- aceptar ya exige sesión iniciada como ese usuario exacto (el chequeo
+    -- de auth + invited_user_id es la barrera de seguridad, no el id).
+    CREATE TABLE IF NOT EXISTS resource_invites (
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      resource_type TEXT NOT NULL,
+      resource_id INTEGER NOT NULL,
+      owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      invited_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL DEFAULT ${NOW_UTC}
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS resource_invites_unique_idx ON resource_invites(resource_type, resource_id, invited_user_id);
+    CREATE INDEX IF NOT EXISTS resource_invites_invited_idx ON resource_invites(invited_user_id);
+    ALTER TABLE resource_invites ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'editor';
+
+    -- Agenda personal de colaboradores frecuentes: agregar una conexión no
+    -- da acceso a nada por sí solo, solo agiliza compartir (todo o
+    -- seleccionando) reutilizando el flujo de invitación de resource_invites.
+    CREATE TABLE IF NOT EXISTS user_connections (
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      connected_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL DEFAULT ${NOW_UTC}
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS user_connections_unique_idx ON user_connections(owner_id, connected_user_id);
+
+    -- Feed de actividad por tablero: solo cambios estructurales/de estado
+    -- (crear/mover/completar/borrar), no cada edición de texto — si no, es
+    -- ruido. card_title/list_name quedan como snapshot porque la tarjeta o
+    -- lista puede haberse borrado después.
+    CREATE TABLE IF NOT EXISTS board_activity (
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      board_id INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+      actor_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      action TEXT NOT NULL,
+      card_title TEXT,
+      list_name TEXT,
+      detail TEXT,
+      created_at TEXT NOT NULL DEFAULT ${NOW_UTC}
+    );
+    CREATE INDEX IF NOT EXISTS board_activity_board_idx ON board_activity(board_id, id DESC);
+
+    -- Notificaciones (hoy solo @menciones en chat/notas); mismo patrón que
+    -- resource_invites: se avisa por WS con notifications:changed.
+    CREATE TABLE IF NOT EXISTS notifications (
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL,
+      resource_type TEXT NOT NULL,
+      resource_id INTEGER NOT NULL,
+      actor_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      excerpt TEXT,
+      message_id INTEGER,
+      read INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT ${NOW_UTC}
+    );
+    CREATE INDEX IF NOT EXISTS notifications_user_idx ON notifications(user_id, id DESC);
+
+    -- Corrección retroactiva: los canales de discusión de tarjeta creados
+    -- antes de que esto se auto-compartiera quedaban invisibles para el
+    -- resto de los colaboradores del tablero. Idempotente (ON CONFLICT).
+    INSERT INTO resource_shares (resource_type, resource_id, owner_id, user_id)
+    SELECT 'channel', links.target_id, boards.owner_id, rs.user_id
+    FROM links
+    JOIN cards ON cards.id = links.source_id AND links.source_type = 'card'
+    JOIN lists ON lists.id = cards.list_id
+    JOIN boards ON boards.id = lists.board_id
+    JOIN resource_shares rs ON rs.resource_type = 'board' AND rs.resource_id = boards.id
+    WHERE links.target_type = 'channel' AND links.kind = 'discussion' AND rs.user_id != boards.owner_id
+    ON CONFLICT DO NOTHING;
+    INSERT INTO resource_shares (resource_type, resource_id, owner_id, user_id)
+    SELECT 'channel', links.target_id, boards.owner_id, boards.owner_id
+    FROM links
+    JOIN cards ON cards.id = links.source_id AND links.source_type = 'card'
+    JOIN lists ON lists.id = cards.list_id
+    JOIN boards ON boards.id = lists.board_id
+    JOIN channels ON channels.id = links.target_id
+    WHERE links.target_type = 'channel' AND links.kind = 'discussion' AND channels.owner_id != boards.owner_id
+    ON CONFLICT DO NOTHING;
 
     -- Migración para bases anteriores a Google Sign-In (CREATE TABLE IF NOT
     -- EXISTS no altera tablas ya existentes)
@@ -270,6 +355,9 @@ export async function initSchema() {
     ALTER TABLE users ADD COLUMN IF NOT EXISTS theme_preset TEXT NOT NULL DEFAULT 'default';
     ALTER TABLE users ADD COLUMN IF NOT EXISTS theme_accent TEXT;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS theme_bg TEXT;
+    -- Trazabilidad en recursos compartidos: quién hizo la última edición
+    ALTER TABLE cards ADD COLUMN IF NOT EXISTS updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+    ALTER TABLE notes ADD COLUMN IF NOT EXISTS updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
     -- Registro con email: verificación y unicidad (case-insensitive)
     ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE sessions ADD COLUMN IF NOT EXISTS expires_at TEXT;

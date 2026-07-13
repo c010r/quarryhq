@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { get, post, patch, del, notifyPlanBlock } from '../api';
+import { get, post, patch, del, notifyPlanBlock, onWsEvent, sendWs } from '../api';
 import type { Backlink, Note, NoteMeta, NoteVersion, TagCount, Template } from '../types';
 import { renderMarkdown } from '../markdown';
 import { navigate } from '../App';
 import { btnDanger, chip, emptyState, headerBtn, modalClose, sectionTitle, sideHeading, sideIcon, sideItem, sideLabel } from '../ui';
 import { alertDialog, confirmDialog, promptDialog } from '../dialog';
 import ShareModal from './ShareModal';
+import PresenceAvatars, { type PresenceViewer } from './PresenceAvatars';
 
 interface NoteDetail {
   note: Note;
@@ -19,9 +20,10 @@ function formatVersionDate(iso: string): string {
 }
 
 // Panel lateral con el historial de versiones (estilo Obsidian Sync)
-function VersionHistory({ noteId, isPremium, onRestore, onClose }: {
+function VersionHistory({ noteId, isPremium, isViewer, onRestore, onClose }: {
   noteId: number;
   isPremium: boolean;
+  isViewer?: boolean;
   onRestore: () => void;
   onClose: () => void;
 }) {
@@ -41,6 +43,7 @@ function VersionHistory({ noteId, isPremium, onRestore, onClose }: {
   }
 
   async function restore(versionId: number) {
+    if (isViewer) return;
     if (!isPremium) {
       notifyPlanBlock('Restaurar versiones anteriores es parte de Premium.');
       return;
@@ -72,9 +75,11 @@ function VersionHistory({ noteId, isPremium, onRestore, onClose }: {
               <button className="text-xs text-accent hover:brightness-110" onClick={() => toggle(v.id)}>
                 {expanded === v.id ? 'Ocultar' : 'Ver contenido'}
               </button>
-              <button className="text-xs text-accent hover:brightness-110" onClick={() => restore(v.id)}>
-                ↩ Restaurar{!isPremium && ' 🔒'}
-              </button>
+              {!isViewer && (
+                <button className="text-xs text-accent hover:brightness-110" onClick={() => restore(v.id)}>
+                  ↩ Restaurar{!isPremium && ' 🔒'}
+                </button>
+              )}
             </div>
             {expanded === v.id && (
               <pre className="mt-1.5 max-h-30 overflow-auto whitespace-pre-wrap rounded-md bg-ink p-2 font-mono text-[11.5px]">{previewContent}</pre>
@@ -107,6 +112,18 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
   const [templates, setTemplates] = useState<Template[]>([]);
   const [showTemplates, setShowTemplates] = useState(false);
   const [showShare, setShowShare] = useState(false);
+  const isViewer = detail?.note.myRole === 'viewer';
+  const [viewers, setViewers] = useState<PresenceViewer[]>([]);
+
+  // Presencia: le avisa al resto quién está mirando esta nota ahora
+  useEffect(() => {
+    if (!noteId) return;
+    sendWs({ type: 'presence:join', resourceType: 'note', resourceId: noteId });
+    return () => sendWs({ type: 'presence:leave' });
+  }, [noteId]);
+  useEffect(() => onWsEvent((e) => {
+    if (e.type === 'presence:update' && e.resourceType === 'note' && e.resourceId === noteId) setViewers(e.viewers);
+  }), [noteId]);
 
   const loadTags = useCallback(() => {
     get<{ tags: TagCount[] }>('/api/tags').then((d) => setTags(d.tags));
@@ -161,18 +178,33 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
   }
 
   const load = useCallback(async (id: number) => {
-    const data = await get<NoteDetail>(`/api/notes/${id}`);
-    setDetail(data);
-    setTitle(data.note.title);
-    setContent(data.note.content);
-    setSaveState('saved');
-    loadedId.current = id;
+    try {
+      const data = await get<NoteDetail>(`/api/notes/${id}`);
+      setDetail(data);
+      setTitle(data.note.title);
+      setContent(data.note.content);
+      setSaveState('saved');
+      loadedId.current = id;
+    } catch {
+      // Borrada, o perdiste el acceso (te sacaron como colaborador)
+      setDetail(null);
+      navigate('/notes');
+    }
   }, []);
 
   useEffect(() => {
     if (noteId) load(noteId);
     else setDetail(null);
   }, [noteId, load]);
+
+  // Cambios remotos (colaborador editando el mismo recurso compartido): se
+  // refresca al instante, salvo que haya tipeo local sin guardar todavía —
+  // ahí se pisaría lo que el usuario está escribiendo.
+  useEffect(() => onWsEvent((e) => {
+    if (e.type !== 'notes:changed' || e.noteId !== noteId) return;
+    if (e.deleted) { navigate('/notes'); return; }
+    if (saveState === 'saved') load(noteId!);
+  }), [noteId, saveState, load]);
 
   // Autoguardado con debounce de 800 ms
   function scheduleSave(nextTitle: string, nextContent: string) {
@@ -262,27 +294,38 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
           <div className="flex shrink-0 flex-wrap items-center gap-x-2.5 gap-y-2 border-b border-edge px-5 py-3">
             <input value={title}
               onChange={(e) => { setTitle(e.target.value); scheduleSave(e.target.value, content); }}
+              readOnly={isViewer}
               className="min-w-40 flex-1 rounded-lg border border-transparent bg-transparent px-2 py-1 font-display text-[17px] font-bold outline-none transition-colors focus:border-accent focus:bg-ink" />
             <span className="min-w-18 text-right text-xs text-dim">
-              {saveState === 'saved' ? '✓ Guardado' : saveState === 'saving' ? 'Guardando…' : 'Sin guardar'}
+              {isViewer ? '👁 solo lectura' : saveState === 'saved' ? '✓ Guardado' : saveState === 'saving' ? 'Guardando…' : 'Sin guardar'}
             </span>
+            {detail.note.shared && (
+              <span className="text-xs text-dim">🤝 compartida por @{detail.note.owner_username}</span>
+            )}
+            {detail.note.updated_by_username && (
+              <span className="text-xs text-dim">· editado por @{detail.note.updated_by_username}</span>
+            )}
+            <PresenceAvatars viewers={viewers} currentUserId={currentUserId} />
             <div className="flex overflow-hidden rounded-lg border border-edge bg-ink">
               <button className={toggleBtn(mode === 'edit')} onClick={() => setMode('edit')}>Editar</button>
               <button className={toggleBtn(mode === 'preview')} onClick={() => setMode('preview')}>Vista previa</button>
             </div>
             <button className={headerBtn} onClick={() => setShowHistory(true)} title="Historial de versiones">🕘 Historial</button>
-            <button className={headerBtn} onClick={saveAsTemplate}
-              title={isPremium ? 'Guardar como plantilla' : 'Guardar como plantilla (Premium)'}>
-              📄{!isPremium && '🔒'}
-            </button>
+            {!isViewer && (
+              <button className={headerBtn} onClick={saveAsTemplate}
+                title={isPremium ? 'Guardar como plantilla' : 'Guardar como plantilla (Premium)'}>
+                📄{!isPremium && '🔒'}
+              </button>
+            )}
             <button className={headerBtn} onClick={() => setShowShare(true)} title="Compartir nota">🤝</button>
-            <button className={btnDanger} onClick={removeNote} title="Eliminar nota">🗑</button>
+            {!isViewer && <button className={btnDanger} onClick={removeNote} title="Eliminar nota">🗑</button>}
           </div>
 
           <div className="flex min-w-0 flex-1 overflow-hidden">
             {mode === 'edit' ? (
               <textarea value={content} placeholder="Escribe en markdown… usa [[Título]] para enlazar otras notas."
                 onChange={(e) => { setContent(e.target.value); scheduleSave(title, e.target.value); }}
+                readOnly={isViewer}
                 className="min-w-0 flex-1 resize-none bg-transparent px-6 py-5 font-mono text-[13.5px] leading-[1.65] outline-none" />
             ) : (
               <div className="md min-w-0 flex-1 overflow-y-auto px-6 py-5" onClick={onPreviewClick}
@@ -333,13 +376,13 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
         </div>
       )}
       {showHistory && detail && (
-        <VersionHistory noteId={detail.note.id} isPremium={isPremium}
+        <VersionHistory noteId={detail.note.id} isPremium={isPremium} isViewer={isViewer}
           onRestore={() => load(detail.note.id)}
           onClose={() => setShowHistory(false)} />
       )}
       {showShare && detail && (
         <ShareModal type="note" resourceId={detail.note.id} resourceName={detail.note.title}
-          currentUserId={currentUserId} onClose={() => setShowShare(false)} />
+          currentUserId={currentUserId} isPremium={isPremium} onClose={() => setShowShare(false)} />
       )}
     </div>
   );

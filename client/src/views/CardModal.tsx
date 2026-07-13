@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { get, post, patch, del } from '../api';
+import { get, post, patch, del, onWsEvent } from '../api';
 import type { Backlink, Card, Channel, ChecklistItem, LinkedNote, NoteMeta, User } from '../types';
 import { LABEL_COLORS } from '../types';
 import { navigate } from '../App';
@@ -15,7 +15,7 @@ interface CardDetail {
   members: User[];
 }
 
-export default function CardModal({ cardId, onClose }: { cardId: number; onClose: () => void }) {
+export default function CardModal({ cardId, isViewer, onClose }: { cardId: number; isViewer?: boolean; onClose: () => void }) {
   const [detail, setDetail] = useState<CardDetail | null>(null);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -24,15 +24,25 @@ export default function CardModal({ cardId, onClose }: { cardId: number; onClose
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [pickingMember, setPickingMember] = useState(false);
   const [newItem, setNewItem] = useState('');
+  const [titleFocused, setTitleFocused] = useState(false);
+  const [descFocused, setDescFocused] = useState(false);
 
   const load = useCallback(async () => {
     const data = await get<CardDetail>(`/api/cards/${cardId}`);
     setDetail(data);
-    setTitle(data.card.title);
-    setDescription(data.card.description);
-  }, [cardId]);
+    // No se pisa lo que el usuario está tipeando (antes del blur que guarda)
+    if (!titleFocused) setTitle(data.card.title);
+    if (!descFocused) setDescription(data.card.description);
+  }, [cardId, titleFocused, descFocused]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Cambios remotos de un colaborador en el mismo tablero: se refleja al
+  // instante (checklist, etiquetas, miembros, y título/descripción si no
+  // estás editándolos vos en este momento).
+  useEffect(() => onWsEvent((e) => {
+    if (e.type === 'board:changed' && detail && e.boardId === detail.card.board_id) load();
+  }), [detail?.card.board_id, load]);
 
   if (!detail) return null;
   const labels: string[] = JSON.parse(detail.card.labels || '[]');
@@ -61,7 +71,7 @@ export default function CardModal({ cardId, onClose }: { cardId: number; onClose
   }
 
   async function startPickingMember() {
-    const { users } = await get<{ users: User[] }>('/api/users');
+    const { users } = await get<{ users: User[] }>(`/api/boards/${detail!.card.board_id}/collaborators`);
     setAllUsers(users.filter((u) => !detail!.members.some((m) => m.id === u.id)));
     setPickingMember(true);
   }
@@ -116,26 +126,30 @@ export default function CardModal({ cardId, onClose }: { cardId: number; onClose
       <div className={modalBox}>
         <div className="flex items-start justify-between gap-3">
           <input value={title} onChange={(e) => setTitle(e.target.value)}
-            onBlur={() => title.trim() && title !== detail.card.title && save({ title })}
+            onFocus={() => setTitleFocused(true)}
+            onBlur={() => { setTitleFocused(false); title.trim() && title !== detail.card.title && save({ title }); }}
+            readOnly={isViewer}
             className="flex-1 rounded-lg border border-transparent bg-transparent px-2 py-1 font-display text-[19px] font-bold outline-none transition-colors focus:border-accent focus:bg-ink" />
           <button className={modalClose} onClick={onClose}>✕</button>
         </div>
-        <div className="-mt-2.5 px-2 text-[13px] text-dim">
-          en la lista <strong className="text-fg">{detail.card.list_name}</strong>
+        <div className="-mt-2.5 flex flex-wrap items-center gap-x-2 px-2 text-[13px] text-dim">
+          <span>en la lista <strong className="text-fg">{detail.card.list_name}</strong></span>
+          {detail.card.updated_by_username && <span>· editado por @{detail.card.updated_by_username}</span>}
+          {isViewer && <span>· 👁 solo lectura</span>}
         </div>
 
         <div>
           <h4 className={sectionTitle}>Estado y vencimiento</h4>
           <div className="flex flex-wrap items-center gap-2">
             <label className={`${chip} accent-ok`}>
-              <input type="checkbox" checked={!!detail.card.completed}
+              <input type="checkbox" checked={!!detail.card.completed} disabled={isViewer}
                 onChange={(e) => save({ completed: e.target.checked })} />
               Completada
             </label>
-            <input type="date" value={detail.card.due_date ?? ''}
+            <input type="date" value={detail.card.due_date ?? ''} disabled={isViewer}
               onChange={(e) => save({ due_date: e.target.value || null })}
-              className="rounded-lg border border-edge bg-ink px-2.5 py-1.5 text-[13px] outline-none focus:border-accent" />
-            {detail.card.due_date && (
+              className="rounded-lg border border-edge bg-ink px-2.5 py-1.5 text-[13px] outline-none focus:border-accent disabled:opacity-60" />
+            {detail.card.due_date && !isViewer && (
               <button className={btnGhost} onClick={() => save({ due_date: null })}>Quitar fecha</button>
             )}
           </div>
@@ -145,8 +159,8 @@ export default function CardModal({ cardId, onClose }: { cardId: number; onClose
           <h4 className={sectionTitle}>Etiquetas</h4>
           <div className="flex flex-wrap gap-2">
             {Object.entries(LABEL_COLORS).map(([name, color]) => (
-              <button key={name} title={name}
-                className={`h-6 w-11 rounded-md border-2 transition-all ${labels.includes(name) ? 'border-fg opacity-100' : 'border-transparent opacity-55 hover:opacity-80'}`}
+              <button key={name} title={name} disabled={isViewer}
+                className={`h-6 w-11 rounded-md border-2 transition-all disabled:cursor-default ${labels.includes(name) ? 'border-fg opacity-100' : 'border-transparent opacity-55 hover:opacity-80'}`}
                 style={{ background: color }}
                 onClick={() => toggleLabel(name)} />
             ))}
@@ -156,8 +170,10 @@ export default function CardModal({ cardId, onClose }: { cardId: number; onClose
         <div>
           <h4 className={sectionTitle}>Descripción <span className="normal-case tracking-normal">(admite [[wiki-links]] a notas)</span></h4>
           <textarea value={description} onChange={(e) => setDescription(e.target.value)}
-            onBlur={() => description !== detail.card.description && save({ description })}
+            onFocus={() => setDescFocused(true)}
+            onBlur={() => { setDescFocused(false); description !== detail.card.description && save({ description }); }}
             placeholder="Añade una descripción…"
+            readOnly={isViewer}
             className="min-h-28 w-full resize-y rounded-lg border border-edge bg-ink px-3 py-2.5 leading-relaxed outline-none transition-colors focus:border-accent" />
         </div>
 
@@ -171,17 +187,21 @@ export default function CardModal({ cardId, onClose }: { cardId: number; onClose
           )}
           {detail.checklist.map((item) => (
             <div key={item.id} className="group flex items-center gap-2 py-1">
-              <input type="checkbox" checked={!!item.done} onChange={() => toggleItem(item)} className="h-4 w-4 accent-accent" />
+              <input type="checkbox" checked={!!item.done} disabled={isViewer} onChange={() => toggleItem(item)} className="h-4 w-4 accent-accent" />
               <span className={`flex-1 ${item.done ? 'text-dim line-through' : ''}`}>{item.text}</span>
-              <button className="text-dim opacity-0 transition-opacity hover:text-danger group-hover:opacity-100"
-                onClick={() => removeItem(item)}>✕</button>
+              {!isViewer && (
+                <button className="text-dim opacity-0 transition-opacity hover:text-danger group-hover:opacity-100"
+                  onClick={() => removeItem(item)}>✕</button>
+              )}
             </div>
           ))}
-          <form className="mt-1.5 flex gap-1.5" onSubmit={addChecklistItem}>
-            <input placeholder="Añadir elemento…" value={newItem} onChange={(e) => setNewItem(e.target.value)}
-              className={`flex-1 ${inputBase} py-1.5 text-[13px]`} />
-            <button className={btnSmall} type="submit">+</button>
-          </form>
+          {!isViewer && (
+            <form className="mt-1.5 flex gap-1.5" onSubmit={addChecklistItem}>
+              <input placeholder="Añadir elemento…" value={newItem} onChange={(e) => setNewItem(e.target.value)}
+                className={`flex-1 ${inputBase} py-1.5 text-[13px]`} />
+              <button className={btnSmall} type="submit">+</button>
+            </form>
+          )}
         </div>
 
         <div>
@@ -190,10 +210,10 @@ export default function CardModal({ cardId, onClose }: { cardId: number; onClose
             {detail.members.map((m) => (
               <span key={m.id} className={chip}>
                 @{m.username}
-                <button className={chipRemove} onClick={() => removeMember(m.id)}>✕</button>
+                {!isViewer && <button className={chipRemove} onClick={() => removeMember(m.id)}>✕</button>}
               </span>
             ))}
-            {pickingMember ? (
+            {!isViewer && (pickingMember ? (
               <select className={selectBase} autoFocus defaultValue=""
                 onChange={(e) => e.target.value && addMember(Number(e.target.value))}
                 onBlur={() => setPickingMember(false)}>
@@ -202,7 +222,7 @@ export default function CardModal({ cardId, onClose }: { cardId: number; onClose
               </select>
             ) : (
               <button className={chipAdd} onClick={startPickingMember}>+ Asignar miembro</button>
-            )}
+            ))}
           </div>
         </div>
 
@@ -212,12 +232,12 @@ export default function CardModal({ cardId, onClose }: { cardId: number; onClose
             {detail.linkedNotes.map((n) => (
               <span key={`${n.link_id}-${n.id}`} className={chip} onClick={() => { onClose(); navigate(`/notes/${n.id}`); }}>
                 <span className="text-note">◆</span>{n.title}
-                {n.kind === 'manual' && (
+                {n.kind === 'manual' && !isViewer && (
                   <button className={chipRemove} onClick={(e) => { e.stopPropagation(); unlinkNote(n.link_id); }}>✕</button>
                 )}
               </span>
             ))}
-            {pickingNote ? (
+            {!isViewer && (pickingNote ? (
               <select className={selectBase} autoFocus defaultValue=""
                 onChange={(e) => e.target.value && linkNote(Number(e.target.value))}
                 onBlur={() => setPickingNote(false)}>
@@ -226,7 +246,7 @@ export default function CardModal({ cardId, onClose }: { cardId: number; onClose
               </select>
             ) : (
               <button className={chipAdd} onClick={startPickingNote}>+ Vincular nota</button>
-            )}
+            ))}
           </div>
         </div>
 
@@ -236,8 +256,10 @@ export default function CardModal({ cardId, onClose }: { cardId: number; onClose
             <span className={chip} onClick={() => { onClose(); navigate(`/chat/${detail.discussion!.id}`); }}>
               <span className="text-chat">#</span>{detail.discussion.name}
             </span>
-          ) : (
+          ) : !isViewer ? (
             <button className={chipAdd} onClick={openDiscussion}>＃ Abrir canal de discusión</button>
+          ) : (
+            <p className="text-[13px] text-dim">Sin discusión todavía.</p>
           )}
         </div>
 
@@ -262,7 +284,7 @@ export default function CardModal({ cardId, onClose }: { cardId: number; onClose
         )}
 
         <div className="flex items-center justify-between">
-          <button className={btnDanger} onClick={removeCard}>Eliminar tarjeta</button>
+          {!isViewer ? <button className={btnDanger} onClick={removeCard}>Eliminar tarjeta</button> : <span />}
           <button className={btnSmall} onClick={onClose}>Cerrar</button>
         </div>
       </div>

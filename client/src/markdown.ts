@@ -34,10 +34,19 @@ function preprocessWikilinks(text: string): string {
     `[${title.trim()}](#/wiki/${encodeURIComponent(title.trim())})`);
 }
 
+// Resalta @usuario como una mención. Exige borde de palabra antes del @ para
+// no confundir "foo@example.com" con una mención (mismo criterio que el
+// servidor). Corre sobre texto ya escapado, así que el username capturado
+// (solo [A-Za-z0-9._-]) no puede contener HTML.
+function preprocessMentions(text: string): string {
+  return text.replace(/(^|\s)@([a-zA-Z0-9._-]{2,32})/g, (_m, pre: string, username: string) =>
+    `${pre}<span class="mention">@${username}</span>`);
+}
+
 export function renderMarkdown(source: string): string {
-  return marked.parse(preprocessWikilinks(escapeHtml(source))) as string;
+  return marked.parse(preprocessMentions(preprocessWikilinks(escapeHtml(source)))) as string;
 }
 
 export function renderInlineMarkdown(source: string): string {
-  return marked.parseInline(preprocessWikilinks(escapeHtml(source))) as string;
+  return marked.parseInline(preprocessMentions(preprocessWikilinks(escapeHtml(source)))) as string;
 }

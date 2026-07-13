@@ -1,5 +1,7 @@
 export type Plan = 'free' | 'premium';
 export type Subscription = 'none' | 'premium' | 'team';
+export type ShareRole = 'editor' | 'viewer';
+export type MyRole = 'owner' | ShareRole;
 export interface User {
   id: number; username: string; name?: string | null; picture?: string | null;
   plan?: Plan;                    // plan efectivo (incluye premium por asiento de equipo)
@@ -33,13 +35,14 @@ export type TeamInfo =
   | { role: 'owner'; members: { id: number; username: string }[]; max_members: number }
   | { role: 'member'; owner: string }
   | null;
-export interface Board { id: number; name: string; owner_id?: number; shared?: boolean; owner_username?: string | null }
+export interface Board { id: number; name: string; owner_id?: number; shared?: boolean; owner_username?: string | null; myRole?: MyRole }
 export interface List { id: number; board_id: number; name: string; position: number; cards: Card[] }
 export interface Card {
   id: number; list_id: number; title: string; description: string;
   labels: string; position: number; list_name?: string; board_id?: number;
   due_date: string | null; completed: number;
   checklist_total?: number; checklist_done?: number; member_names?: string | null;
+  updated_by?: number | null; updated_by_username?: string | null;
 }
 export interface ChecklistItem { id: number; card_id: number; text: string; done: number; position: number }
 export interface BoardRule { id: number; board_id: number; list_id: number; action: string; param: string; list_name?: string }
@@ -48,13 +51,31 @@ export interface Template { id: number; name: string; content: string }
 export interface TagCount { tag: string; count: number }
 export interface Reaction { message_id: number; emoji: string; count: number; mine: number }
 export interface ScheduledMessage { id: number; content: string; send_at: string }
-export interface Note { id: number; title: string; content: string; updated_at: string; owner_id?: number }
+export interface Note {
+  id: number; title: string; content: string; updated_at: string; owner_id?: number;
+  updated_by?: number | null; updated_by_username?: string | null;
+  shared?: boolean; owner_username?: string | null; myRole?: MyRole;
+}
 export interface NoteMeta { id: number; title: string; updated_at: string; shared?: boolean; owner_username?: string | null }
 export interface Channel {
   id: number; name: string; card_id?: number | null; card_title?: string | null;
-  owner_id?: number; shared?: boolean; owner_username?: string | null;
+  owner_id?: number; shared?: boolean; owner_username?: string | null; myRole?: MyRole;
 }
-export interface Collaborator { id: number; username: string }
+export interface Collaborator { id: number; username: string; role: ShareRole }
+export interface Connection { id: number; username: string }
+export interface PendingInvite {
+  id: number; resource_type: 'board' | 'note' | 'channel'; resource_id: number;
+  resource_name: string; owner_username: string; created_at: string; role: ShareRole;
+}
+export interface NotificationEntry {
+  id: number; kind: string; resource_type: 'board' | 'note' | 'channel'; resource_id: number;
+  excerpt: string | null; message_id: number | null; read: number; created_at: string;
+  actor_username: string; resource_name: string | null;
+}
+export interface ActivityEntry {
+  id: number; action: string; card_title: string | null; list_name: string | null;
+  detail: string | null; created_at: string; actor_username: string | null;
+}
 export interface Message {
   id: number; channel_id: number; user_id: number; content: string; created_at: string; username: string;
   parent_id?: number | null; edited_at?: string | null; pinned?: number; reply_count?: number;

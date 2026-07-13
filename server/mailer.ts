@@ -48,3 +48,13 @@ export function resetPasswordHtml(token: string): string {
     'Recibimos un pedido para restablecer tu contraseña de QuarryHQ. El enlace vence en 1 hora y solo puede usarse una vez.',
     { url, label: 'Elegir nueva contraseña' });
 }
+
+const RESOURCE_LABEL: Record<string, string> = { board: 'el tablero', note: 'la nota', channel: 'el canal' };
+
+export function inviteHtml(inviteId: number, ownerUsername: string, resourceType: string, resourceName: string): string {
+  const url = `${APP_URL}/#/invite/${inviteId}`;
+  const label = RESOURCE_LABEL[resourceType] ?? 'el recurso';
+  return layout(`@${ownerUsername} te invitó a colaborar`,
+    `@${ownerUsername} te invitó a colaborar en ${label} <strong>"${resourceName}"</strong> en QuarryHQ. Iniciá sesión y aceptá la invitación para empezar a trabajar juntos.`,
+    { url, label: 'Ver invitación' });
+}

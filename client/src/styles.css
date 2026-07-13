@@ -61,6 +61,13 @@
     transition: background 0.1s;
   }
   .md a[href^="#/wiki/"]:hover { background: color-mix(in oklab, var(--color-chat) 14%, transparent); }
+  .md .mention {
+    color: var(--color-accent);
+    background: color-mix(in oklab, var(--color-accent) 14%, transparent);
+    border-radius: 4px;
+    padding: 0 3px;
+    font-weight: 600;
+  }
   .md h1, .md h2, .md h3 {
     font-family: var(--font-display);
     font-weight: 700;

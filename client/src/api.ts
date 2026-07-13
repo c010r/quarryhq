@@ -88,3 +88,10 @@ export function onWsEvent(fn: WsListener): () => void {
   listeners.add(fn);
   return () => listeners.delete(fn);
 }
+
+// Mensajes cliente -> servidor (hoy solo presencia: "estoy viendo este tablero/nota/canal").
+// Best-effort: si el socket no está abierto todavía, se pierde (no es crítico, la
+// presencia es efímera y se resincroniza sola en la próxima acción).
+export function sendWs(event: Record<string, unknown>) {
+  if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(event));
+}
