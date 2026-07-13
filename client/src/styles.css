@@ -23,6 +23,21 @@
   --font-display: "Bricolage Grotesque", "Inter", system-ui, sans-serif;
   --font-sans: "Inter", system-ui, -apple-system, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+
+  /* Movimiento: entradas cortas y con resorte, nunca decorativas de más. */
+  --animate-fade-in: fade-in 0.15s ease-out both;
+  --animate-modal-in: modal-in 0.16s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-pop-in: pop-in 0.12s ease-out both;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+}
+@keyframes modal-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+}
+@keyframes pop-in {
+  from { opacity: 0; transform: scale(0.94); }
 }
 
 @layer base {
@@ -45,6 +60,10 @@
   ::-webkit-scrollbar-thumb { background: var(--color-edge); border-radius: 5px; }
   ::-webkit-scrollbar-thumb:hover { background: var(--color-hover); }
   ::-webkit-scrollbar-track { background: transparent; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+  }
 }
 
 /*

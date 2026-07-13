@@ -240,7 +240,12 @@ export default function ChatView({ channelId, user, isPremium }: { channelId: nu
 
   const reactionsFor = (id: number) => reactions.filter((r) => r.message_id === id);
 
-  if (!channel) return <div className={emptyState}>Canal no encontrado.</div>;
+  if (!channel) return (
+    <div className={emptyState}>
+      <span className="text-3xl opacity-60">#</span>
+      <p>No encontramos este canal. Puede que ya no exista o que hayas perdido el acceso.</p>
+    </div>
+  );
 
   return (
     <div className="flex h-full min-w-0 flex-col">

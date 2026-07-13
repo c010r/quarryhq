@@ -9,7 +9,7 @@ import AutomationModal from './AutomationModal';
 import ShareModal from './ShareModal';
 import ActivityModal from './ActivityModal';
 import PresenceAvatars, { type PresenceViewer } from './PresenceAvatars';
-import { avatarColor, btnGhost, btnSmall, emptyState, headerBtn, mainHeader, viewTitle } from '../ui';
+import { avatarColor, btnGhost, btnSmall, emptyState, headerBtn, iconBtn, mainHeader, viewTitle } from '../ui';
 import { confirmDialog } from '../dialog';
 
 function CardBadges({ card }: { card: Card }) {
@@ -97,6 +97,7 @@ export default function BoardView({ boardId, initialCardId, isPremium, currentUs
   const [showRules, setShowRules] = useState(false);
   const [showShare, setShowShare] = useState(false);
   const [showActivity, setShowActivity] = useState(false);
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [viewers, setViewers] = useState<PresenceViewer[]>([]);
 
   const load = useCallback(async () => {
@@ -145,7 +146,12 @@ export default function BoardView({ boardId, initialCardId, isPremium, currentUs
     load();
   }
 
-  if (!board) return <div className={emptyState}>Tablero no encontrado.</div>;
+  if (!board) return (
+    <div className={emptyState}>
+      <span className="text-3xl opacity-60">▦</span>
+      <p>No encontramos este tablero. Puede que ya no exista o que hayas perdido el acceso.</p>
+    </div>
+  );
   const isViewer = board.myRole === 'viewer';
 
   const viewTab = (active: boolean) =>
@@ -169,14 +175,39 @@ export default function BoardView({ boardId, initialCardId, isPremium, currentUs
             📅 Calendario{!isPremium && ' 🔒'}
           </button>
         </div>
-        {!isViewer && (
-          <button className={headerBtn}
-            onClick={() => isPremium ? setShowRules(true) : notifyPlanBlock('Las automatizaciones estilo Butler son parte de Premium.')}>
-            ⚙ Automatización{!isPremium && ' 🔒'}
-          </button>
-        )}
-        <button className={headerBtn} onClick={() => setShowShare(true)}>🤝 Compartir</button>
-        <button className={headerBtn} onClick={() => setShowActivity(true)}>📋 Actividad</button>
+        {/* En pantallas chicas estas tres acciones se apilaban en filas
+            propias y empujaban el tablero fuera de la vista; a partir de sm
+            se muestran inline, antes se agrupan en un menú "⋯". */}
+        <div className="hidden items-center gap-2 sm:flex">
+          {!isViewer && (
+            <button className={headerBtn}
+              onClick={() => isPremium ? setShowRules(true) : notifyPlanBlock('Las automatizaciones estilo Butler son parte de Premium.')}>
+              ⚙ Automatización{!isPremium && ' 🔒'}
+            </button>
+          )}
+          <button className={headerBtn} onClick={() => setShowShare(true)}>🤝 Compartir</button>
+          <button className={headerBtn} onClick={() => setShowActivity(true)}>📋 Actividad</button>
+        </div>
+        <div className="relative sm:hidden">
+          <button className={iconBtn} aria-label="Más acciones" onClick={() => setShowMoreMenu((v) => !v)}>⋯</button>
+          {showMoreMenu && (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setShowMoreMenu(false)} />
+              <div className="absolute right-0 top-full z-20 mt-1.5 flex w-48 animate-pop-in flex-col gap-0.5 rounded-lg border border-edge bg-panel p-1.5 shadow-xl shadow-black/40">
+                {!isViewer && (
+                  <button className="rounded-md px-2.5 py-2 text-left text-[13px] text-dim transition-colors hover:bg-hover hover:text-fg"
+                    onClick={() => { setShowMoreMenu(false); isPremium ? setShowRules(true) : notifyPlanBlock('Las automatizaciones estilo Butler son parte de Premium.'); }}>
+                    ⚙ Automatización{!isPremium && ' 🔒'}
+                  </button>
+                )}
+                <button className="rounded-md px-2.5 py-2 text-left text-[13px] text-dim transition-colors hover:bg-hover hover:text-fg"
+                  onClick={() => { setShowMoreMenu(false); setShowShare(true); }}>🤝 Compartir</button>
+                <button className="rounded-md px-2.5 py-2 text-left text-[13px] text-dim transition-colors hover:bg-hover hover:text-fg"
+                  onClick={() => { setShowMoreMenu(false); setShowActivity(true); }}>📋 Actividad</button>
+              </div>
+            </>
+          )}
+        </div>
         {isViewer && <span className="text-[12px] text-dim">👁 solo lectura</span>}
       </div>
       <div className="min-w-0 flex-1 overflow-auto">
@@ -207,7 +238,7 @@ export default function BoardView({ boardId, initialCardId, isPremium, currentUs
                         onDragLeave={() => setDropTarget(null)}
                         onDrop={() => { if (dragging) moveCard(dragging, list.id, i); setDragging(null); setDropTarget(null); }} />
                       <div
-                        className={`rounded-lg border border-edge bg-raised px-3 py-2.5 transition-colors hover:border-board ${isViewer ? 'cursor-pointer' : 'cursor-grab'} ${dragging?.id === card.id ? 'opacity-40' : ''}`}
+                        className={`rounded-lg border border-edge bg-raised px-3 py-2.5 transition-all duration-150 hover:-translate-y-0.5 hover:border-board hover:shadow-lg hover:shadow-board/10 active:translate-y-0 ${isViewer ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'} ${dragging?.id === card.id ? 'opacity-40' : ''}`}
                         draggable={!isViewer}
                         onDragStart={() => setDragging(card)}
                         onDragEnd={() => { setDragging(null); setDropTarget(null); }}

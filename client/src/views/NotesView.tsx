@@ -3,7 +3,7 @@ import { get, post, patch, del, notifyPlanBlock, onWsEvent, sendWs } from '../ap
 import type { Backlink, Note, NoteMeta, NoteVersion, TagCount, Template } from '../types';
 import { renderMarkdown } from '../markdown';
 import { navigate } from '../App';
-import { btnDanger, chip, emptyState, headerBtn, modalClose, sectionTitle, sideHeading, sideIcon, sideItem, sideLabel } from '../ui';
+import { chip, emptyState, headerBtn, iconBtn, modalClose, sectionTitle, sideHeading, sideIcon, sideItem, sideLabel } from '../ui';
 import { alertDialog, confirmDialog, promptDialog } from '../dialog';
 import ShareModal from './ShareModal';
 import PresenceAvatars, { type PresenceViewer } from './PresenceAvatars';
@@ -312,13 +312,15 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
             </div>
             <button className={headerBtn} onClick={() => setShowHistory(true)} title="Historial de versiones">🕘 Historial</button>
             {!isViewer && (
-              <button className={headerBtn} onClick={saveAsTemplate}
+              <button className={iconBtn} onClick={saveAsTemplate}
                 title={isPremium ? 'Guardar como plantilla' : 'Guardar como plantilla (Premium)'}>
                 📄{!isPremium && '🔒'}
               </button>
             )}
-            <button className={headerBtn} onClick={() => setShowShare(true)} title="Compartir nota">🤝</button>
-            {!isViewer && <button className={btnDanger} onClick={removeNote} title="Eliminar nota">🗑</button>}
+            <button className={iconBtn} onClick={() => setShowShare(true)} title="Compartir nota">🤝</button>
+            {!isViewer && (
+              <button className={`${iconBtn} hover:border-danger hover:text-danger`} onClick={removeNote} title="Eliminar nota">🗑</button>
+            )}
           </div>
 
           <div className="flex min-w-0 flex-1 overflow-hidden">
