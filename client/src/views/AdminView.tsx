@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { del, get, post } from '../api';
 import type { AdminPayment, AdminUser, InviteCode } from '../types';
 import { btnSmall, emptyState, mainHeader, viewTitle } from '../ui';
-import { alertDialog, confirmDialog } from '../dialog';
+import { alertDialog, confirmDialog, promptDialog } from '../dialog';
 
 interface AdminStats {
   users: number;
@@ -56,8 +56,8 @@ function UsersTab({ onChanged }: { onChanged: () => void }) {
     } finally { setBusy(false); }
   }
 
-  const grantPremium = (u: AdminUser) => {
-    const days = prompt(`¿Cuántos días de Premium de cortesía para @${u.username}?`, '30');
+  const grantPremium = async (u: AdminUser) => {
+    const days = await promptDialog(`¿Cuántos días de Premium de cortesía para @${u.username}?`, { defaultValue: '30' });
     if (!days) return;
     act(() => post(`/api/admin/users/${u.id}/premium`, { days: Number(days) }));
   };

@@ -10,7 +10,7 @@ import UpgradeModal from './views/UpgradeModal';
 import AppearanceModal from './views/AppearanceModal';
 import AdminView from './views/AdminView';
 import { btnPrimary, btnGhost, emptyState, inputBase, sideHeading, sideIcon, sideItem, sideLabel } from './ui';
-import { alertDialog } from './dialog';
+import { alertDialog, promptDialog } from './dialog';
 import { applyTheme } from './theme';
 
 function useHashRoute(): string[] {
@@ -347,7 +347,7 @@ function Workspace({ user, onLogout, onUserChanged }: {
   }, [route.length, boards]);
 
   async function createBoard() {
-    const name = prompt('Nombre del tablero:');
+    const name = await promptDialog('Nombre del tablero:');
     if (!name?.trim()) return;
     try {
       const { board } = await post<{ board: Board }>('/api/boards', { name });
@@ -359,7 +359,7 @@ function Workspace({ user, onLogout, onUserChanged }: {
   }
 
   async function createNote() {
-    const title = prompt('Título de la nota:');
+    const title = await promptDialog('Título de la nota:');
     if (!title?.trim()) return;
     try {
       const { note } = await post<{ note: { id: number } }>('/api/notes', { title });
@@ -371,7 +371,7 @@ function Workspace({ user, onLogout, onUserChanged }: {
   }
 
   async function createChannel() {
-    const name = prompt('Nombre del canal:');
+    const name = await promptDialog('Nombre del canal:');
     if (!name?.trim()) return;
     try {
       const { channel } = await post<{ channel: Channel }>('/api/channels', { name });

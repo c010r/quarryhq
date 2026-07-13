@@ -4,7 +4,7 @@ import type { Backlink, Note, NoteMeta, NoteVersion, TagCount, Template } from '
 import { renderMarkdown } from '../markdown';
 import { navigate } from '../App';
 import { btnDanger, chip, emptyState, headerBtn, modalClose, sectionTitle, sideHeading, sideIcon, sideItem, sideLabel } from '../ui';
-import { alertDialog, confirmDialog } from '../dialog';
+import { alertDialog, confirmDialog, promptDialog } from '../dialog';
 import ShareModal from './ShareModal';
 
 interface NoteDetail {
@@ -126,7 +126,7 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
   }
 
   async function createFromTemplate(templateId: number) {
-    const title = prompt('Título de la nueva nota:');
+    const title = await promptDialog('Título de la nueva nota:');
     if (!title?.trim()) return;
     const { note } = await post<{ note: { id: number } }>('/api/notes', { title, template_id: templateId });
     setShowTemplates(false);
@@ -140,7 +140,7 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
       notifyPlanBlock('Crear plantillas personalizadas es parte de Premium.');
       return;
     }
-    const name = prompt('Nombre de la plantilla:', detail.note.title);
+    const name = await promptDialog('Nombre de la plantilla:', { defaultValue: detail.note.title });
     if (!name?.trim()) return;
     try {
       await post('/api/templates', { name, content: content });
