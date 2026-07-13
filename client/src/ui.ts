@@ -36,8 +36,11 @@ export const btnPrimary =
   'rounded-lg bg-accent px-3.5 py-2 text-sm font-semibold text-ink transition hover:brightness-110 active:scale-[0.97] disabled:opacity-50 disabled:active:scale-100';
 export const btnSmall =
   'rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-ink transition hover:brightness-110 active:scale-[0.97] disabled:opacity-50 disabled:active:scale-100';
-export const btnGhost = 'text-xs text-dim transition-colors hover:text-fg';
-export const btnDanger = 'text-xs text-danger opacity-80 transition-opacity hover:opacity-100';
+export const btnGhost = 'text-xs text-dim transition-colors hover:text-fg disabled:opacity-50 disabled:pointer-events-none';
+export const btnDanger = 'text-xs text-danger opacity-80 transition-opacity hover:opacity-100 disabled:opacity-50 disabled:pointer-events-none';
+// Acción secundaria de bajo peso visual en línea de texto (p. ej. "+ Premium"
+// en el panel de admin): mismo peso que btnGhost pero en tono accent.
+export const linkBtn = 'text-[11.5px] text-accent transition hover:brightness-110 disabled:opacity-50 disabled:pointer-events-none';
 export const btnDangerSolid =
   'rounded-lg bg-danger px-3.5 py-2 text-sm font-semibold text-ink transition hover:brightness-110 active:scale-[0.97] disabled:opacity-50 disabled:active:scale-100';
 export const headerBtn =
@@ -67,10 +70,18 @@ export const modalBox =
 export const modalClose =
   'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-lg text-dim transition-colors hover:bg-hover hover:text-fg active:scale-[0.97]';
 
-export const emptyState = 'flex h-full min-w-0 flex-col items-center justify-center gap-2 px-4 text-center text-dim';
+// mainHeader y emptyState se renderizan directo sobre <main>, sin un fondo
+// opaco propio, así que el fondo de escritorio (imagen Premium) queda visible
+// detrás. El backdrop translúcido en el header y la sombra en el texto vacío
+// mantienen la legibilidad sin cambiar el look cuando no hay imagen de fondo.
+// El halo repite el color de fondo (--color-ink) como contorno de 1px
+// alrededor de cada glifo: recrea el mismo contraste que el texto ya tiene
+// sobre el fondo plano, sin importar qué haya detrás (una foto con zonas
+// claras y oscuras a la vez no puede "vencer" un contorno sólido).
+export const emptyState = 'flex h-full min-w-0 flex-col items-center justify-center gap-2 px-4 text-center text-dim [text-shadow:1px_0_var(--color-ink),-1px_0_var(--color-ink),0_1px_var(--color-ink),0_-1px_var(--color-ink),1px_1px_var(--color-ink),-1px_-1px_var(--color-ink),1px_-1px_var(--color-ink),-1px_1px_var(--color-ink),0_2px_10px_var(--color-ink)]';
 
 export const viewTitle = 'min-w-0 font-display text-[17px] font-bold';
-export const mainHeader = 'flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-edge px-3.5 py-3 sm:px-5 sm:py-3.5';
+export const mainHeader = 'flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-edge bg-ink/85 px-3.5 py-3 backdrop-blur-sm sm:px-5 sm:py-3.5';
 
 // Paleta compartida para avatares de usuario (chat y miembros de tarjeta).
 export const AVATAR_COLORS = ['#8b93f8', '#3ecfb2', '#e9a23b', '#f27d98', '#6bb2f2', '#b18cfa'];

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { del, get, post } from '../api';
 import type { Plan, PlanLimits, PlanUsage, TeamInfo, User } from '../types';
-import { btnGhost, btnSmall, inputBase, modalBackdrop, modalBox, modalClose } from '../ui';
+import { btnDanger, btnGhost, btnSmall, inputBase, modalBackdrop, modalBox, modalClose } from '../ui';
 import { alertDialog, confirmDialog } from '../dialog';
 
 const FREE_FEATURES = [
@@ -155,7 +155,7 @@ export default function UpgradeModal({ plan, message, onClose, onChanged }: {
               {subscription === 'premium' ? (
                 <button className={btnGhost} disabled={busy} onClick={cancelSub}>Cancelar suscripción</button>
               ) : (
-                <button className="w-full rounded-lg bg-accent px-3 py-2 text-[13px] font-semibold text-ink transition hover:brightness-110 disabled:opacity-50"
+                <button className="w-full rounded-lg bg-accent px-3 py-2 text-[13px] font-semibold text-ink transition hover:brightness-110 active:scale-[0.97] disabled:opacity-50 disabled:active:scale-100"
                   disabled={busy} onClick={() => upgrade('premium')}>
                   {subscription === 'team' ? 'Cambiar a Individual' : 'Activar Individual'}
                 </button>
@@ -175,7 +175,7 @@ export default function UpgradeModal({ plan, message, onClose, onChanged }: {
               {subscription === 'team' ? (
                 <button className={btnGhost} disabled={busy} onClick={cancelSub}>Cancelar suscripción</button>
               ) : (
-                <button className="w-full rounded-lg bg-note px-3 py-2 text-[13px] font-semibold text-ink transition hover:brightness-110 disabled:opacity-50"
+                <button className="w-full rounded-lg bg-note px-3 py-2 text-[13px] font-semibold text-ink transition hover:brightness-110 active:scale-[0.97] disabled:opacity-50 disabled:active:scale-100"
                   disabled={busy} onClick={() => upgrade('team')}>
                   {subscription === 'premium' ? 'Cambiar a Equipos' : 'Activar Equipos'}
                 </button>
@@ -193,7 +193,7 @@ export default function UpgradeModal({ plan, message, onClose, onChanged }: {
               {me.team.members.map((m) => (
                 <div key={m.id} className="flex items-center justify-between rounded-lg bg-raised px-3 py-1.5 text-[13px]">
                   <span>@{m.username} <span className="text-[11px] text-accent">★ Premium</span></span>
-                  <button className="text-xs text-danger opacity-80 hover:opacity-100" disabled={busy}
+                  <button className={btnDanger} disabled={busy}
                     onClick={() => removeMember(m.id)}>Quitar</button>
                 </div>
               ))}

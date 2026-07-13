@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { del, get, post } from '../api';
 import type { AdminPayment, AdminUser, InviteCode } from '../types';
-import { btnSmall, emptyState, mainHeader, viewTitle } from '../ui';
+import { btnDanger, btnGhost, btnSmall, emptyState, linkBtn, mainHeader, viewTitle } from '../ui';
 import { alertDialog, confirmDialog, promptDialog } from '../dialog';
 
 interface AdminStats {
@@ -79,8 +79,6 @@ function UsersTab({ onChanged }: { onChanged: () => void }) {
     ? users.filter((u) => u.username.toLowerCase().includes(q) || (u.email ?? '').toLowerCase().includes(q) || (u.name ?? '').toLowerCase().includes(q))
     : users;
 
-  const linkBtn = 'text-[11.5px] text-accent transition hover:brightness-110 disabled:opacity-40';
-
   return (
     <>
       <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar por usuario, email o nombre…"
@@ -110,8 +108,7 @@ function UsersTab({ onChanged }: { onChanged: () => void }) {
               <button className={linkBtn} disabled={busy} onClick={() => toggleAdmin(u)}>
                 {u.is_admin ? 'Quitar admin' : 'Hacer admin'}
               </button>
-              <button className="text-[11.5px] text-danger opacity-80 transition-opacity hover:opacity-100 disabled:opacity-40"
-                disabled={busy} onClick={() => removeUser(u)}>Eliminar</button>
+              <button className={btnDanger} disabled={busy} onClick={() => removeUser(u)}>Eliminar</button>
             </div>
           </div>
         ))}
@@ -215,13 +212,13 @@ function InvitesTab() {
             <div key={inv.id}
               className={`flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-edge bg-panel px-3.5 py-2 text-[13px] ${exhausted ? 'opacity-60' : ''}`}>
               <code className="font-mono text-accent">{inv.code}</code>
-              <button className="text-[11.5px] text-dim transition-colors hover:text-fg" type="button"
+              <button className={btnGhost} type="button"
                 onClick={() => copyInvite(inv)}>{copied === inv.id ? '✓ copiado' : '⧉ copiar'}</button>
               <span className="text-dim">{inv.trial_days} días · {inv.used_count}/{inv.max_uses} usos{exhausted ? ' · agotado' : ''}</span>
               {inv.redeemed_by && (
                 <span className="overflow-hidden text-ellipsis whitespace-nowrap text-[12px] text-dim">→ {inv.redeemed_by}</span>
               )}
-              <button className="sm:ml-auto text-xs text-danger opacity-80 transition-opacity hover:opacity-100"
+              <button className={`${btnDanger} sm:ml-auto`}
                 onClick={() => deleteInvite(inv)}>Eliminar</button>
             </div>
           );

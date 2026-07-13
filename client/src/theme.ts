@@ -12,15 +12,18 @@ export const THEME_PRESETS: Record<string, ThemePreset> = {
 
 export interface BgPreset { label: string; css: string }
 
+// Fotos reales de Unsplash (unsplash.com/license: uso libre, sin necesidad de
+// atribución). Serví siempre vía su CDN con w/q recortados para no pesar.
+const unsplash = (id: string) => `url("https://images.unsplash.com/${id}?auto=format&fit=crop&w=1600&q=60")`;
+
 export const BG_PRESETS: Record<string, BgPreset> = {
   default: { label: 'Ninguno', css: 'none' },
-  aurora: { label: 'Aurora', css: 'radial-gradient(ellipse at top, #1a1f3a 0%, #0c0f16 62%)' },
-  nebula: {
-    label: 'Nebulosa',
-    css: 'radial-gradient(ellipse at 20% 20%, #2a1a3a 0%, transparent 55%), radial-gradient(ellipse at 80% 85%, #142a35 0%, #0c0f16 60%)',
-  },
-  sunrise: { label: 'Amanecer', css: 'radial-gradient(ellipse at bottom, #3a2415 0%, #0c0f16 65%)' },
   mono: { label: 'Monocromo', css: 'radial-gradient(ellipse at top, #1c1c22 0%, #0c0f16 62%)' },
+  mountains: { label: 'Montañas', css: unsplash('photo-1506905925346-21bda4d32df4') },
+  forest: { label: 'Sendero', css: unsplash('photo-1441974231531-c6227db76b6e') },
+  aurora: { label: 'Aurora', css: unsplash('photo-1519681393784-d120267933ba') },
+  nebula: { label: 'Nebulosa', css: unsplash('photo-1502134249126-9f3755a50d78') },
+  earth: { label: 'Tierra', css: unsplash('photo-1451187580459-43490279c0fa') },
 };
 
 // Aplica la estética guardada del usuario pisando las custom properties en

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { get, post, del } from '../api';
 import type { BoardRule, List } from '../types';
 import { LABEL_COLORS } from '../types';
-import { btnSmall, modalBackdrop, modalClose, sectionTitle, selectBase } from '../ui';
+import { btnSmall, modalBackdrop, modalBox, modalClose, sectionTitle, selectBase } from '../ui';
 
 const ACTION_LABELS: Record<string, string> = {
   complete: 'marcarla como completada',
@@ -42,7 +42,7 @@ export default function AutomationModal({ boardId, lists, onClose }: {
 
   return (
     <div className={modalBackdrop} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="flex w-full max-w-[560px] flex-col gap-4 rounded-2xl border border-edge bg-panel p-4 shadow-2xl shadow-black/40 sm:p-6">
+      <div className={`${modalBox} max-w-[560px]`}>
         <div className="flex items-start justify-between gap-3">
           <h3 className="px-2 py-1 font-display text-lg font-bold">⚙ Automatizaciones del tablero</h3>
           <button className={modalClose} onClick={onClose}>✕</button>

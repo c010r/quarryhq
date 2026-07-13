@@ -1,6 +1,6 @@
 import { post } from '../api';
 import type { NotificationEntry } from '../types';
-import { modalBackdrop, modalBox, modalClose } from '../ui';
+import { linkBtn, modalBackdrop, modalBox, modalClose } from '../ui';
 import { navigate } from '../App';
 
 const TYPE_PATH: Record<NotificationEntry['resource_type'], string> = { board: 'board', note: 'notes', channel: 'chat' };
@@ -42,7 +42,7 @@ export default function NotificationsModal({ notifications, onChanged, onClose }
         ) : (
           <>
             {unread > 0 && (
-              <button className="self-start text-[12px] text-accent hover:brightness-110" onClick={markAllRead}>
+              <button className={`self-start ${linkBtn}`} onClick={markAllRead}>
                 Marcar todas como leídas
               </button>
             )}

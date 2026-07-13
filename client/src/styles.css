@@ -19,6 +19,7 @@
   --color-chat: #3ecfb2;
   --color-danger: #f26d6d;
   --color-ok: #4ade80;
+  --auth-glow: #1a1f3a;
 
   --font-display: "Bricolage Grotesque", "Inter", system-ui, sans-serif;
   --font-sans: "Inter", system-ui, -apple-system, sans-serif;
@@ -40,6 +41,30 @@
   from { opacity: 0; transform: scale(0.94); }
 }
 
+/*
+ * Modo claro: mismas variables, valores nuevos. Como todas las utilidades de
+ * Tailwind (bg-ink, text-dim, border-edge…) referencian estas custom
+ * properties en vez de un hex fijo, redefinirlas re-tema toda la app sin
+ * tocar un solo componente. El tono de módulo (board/note/chat) se oscurece
+ * un escalón para mantener contraste AA sobre fondo claro.
+ */
+:root[data-theme="light"] {
+  --color-ink: #f3f4f9;
+  --color-panel: #ffffff;
+  --color-raised: #eceef5;
+  --color-hover: #e2e5f0;
+  --color-edge: #d7dbe7;
+  --color-fg: #191c28;
+  --color-dim: #666b80;
+  --color-accent: #6366f1;
+  --color-board: #b3690a;
+  --color-note: #7c3aed;
+  --color-chat: #0d9488;
+  --color-danger: #dc2626;
+  --color-ok: #16a34a;
+  --auth-glow: #e4e7f7;
+}
+
 @layer base {
   html, body, #root { height: 100%; }
   body {
@@ -49,7 +74,6 @@
     background-size: cover;
     background-position: center;
     background-repeat: no-repeat;
-    background-attachment: fixed;
   }
   button { font: inherit; color: inherit; cursor: pointer; }
   input, textarea, select { font: inherit; color: var(--color-fg); }

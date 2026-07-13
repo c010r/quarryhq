@@ -615,7 +615,7 @@ app.get('/api/me', requireAuth, h(async (req: AuthedRequest, res) => {
 // Se valida contra listas fijas + un formato de color/URL estricto: nada de
 // lo que llega en el body se interpola directo en HTML/CSS sin chequear.
 const THEME_PRESETS = ['default', 'ocean', 'sunset', 'forest', 'rose', 'custom'];
-const BG_PRESETS = ['default', 'aurora', 'nebula', 'sunrise', 'mono'];
+const BG_PRESETS = ['default', 'mono', 'mountains', 'forest', 'aurora', 'nebula', 'earth'];
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 
 app.patch('/api/me/theme', requireAuth, requirePremium, h(async (req: AuthedRequest, res) => {

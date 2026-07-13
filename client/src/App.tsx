@@ -12,9 +12,10 @@ import InvitesModal from './views/InvitesModal';
 import NotificationsModal from './views/NotificationsModal';
 import ConnectionsModal from './views/ConnectionsModal';
 import AdminView from './views/AdminView';
-import { btnPrimary, btnGhost, emptyState, inputBase, sideHeading, sideIcon, sideItem, sideLabel } from './ui';
+import { btnPrimary, btnGhost, emptyState, headerBtn, inputBase, sideHeading, sideIcon, sideItem, sideLabel } from './ui';
 import { alertDialog, promptDialog } from './dialog';
 import { applyTheme } from './theme';
+import { type ColorMode, getEffectiveMode, setColorMode } from './colorMode';
 
 function useHashRoute(): string[] {
   const [hash, setHash] = useState(location.hash);
@@ -157,7 +158,7 @@ function Login({ onAuth }: { onAuth: (user: User) => void }) {
   }
 
   return (
-    <div className="flex min-h-full items-center justify-center overflow-y-auto bg-ink p-4 [background-image:radial-gradient(ellipse_at_top,#1a1f3a_0%,var(--color-ink)_62%)]">
+    <div className="flex min-h-full items-center justify-center overflow-y-auto bg-ink p-4 [background-image:radial-gradient(ellipse_at_top,var(--auth-glow)_0%,var(--color-ink)_62%)]">
       <form onSubmit={submit} className="flex w-full max-w-[380px] flex-col gap-3.5 rounded-2xl border border-edge bg-panel p-5 shadow-2xl shadow-black/50 sm:p-9">
         <LinkMark />
         <h1 className="font-display text-[28px] font-extrabold tracking-tight">QuarryHQ</h1>
@@ -255,7 +256,7 @@ function ResetPassword({ token, onAuth }: { token: string; onAuth: (user: User) 
   }
 
   return (
-    <div className="flex min-h-full items-center justify-center overflow-y-auto bg-ink p-4 [background-image:radial-gradient(ellipse_at_top,#1a1f3a_0%,var(--color-ink)_62%)]">
+    <div className="flex min-h-full items-center justify-center overflow-y-auto bg-ink p-4 [background-image:radial-gradient(ellipse_at_top,var(--auth-glow)_0%,var(--color-ink)_62%)]">
       <form onSubmit={submit} className="flex w-full max-w-[380px] flex-col gap-3.5 rounded-2xl border border-edge bg-panel p-5 shadow-2xl shadow-black/50 sm:p-9">
         <LinkMark />
         <h1 className="font-display text-[22px] font-extrabold tracking-tight">Nueva contraseña</h1>
@@ -294,7 +295,14 @@ function Workspace({ user, onLogout, onUserChanged }: {
   const [showInvites, setShowInvites] = useState(false);
   const [notifications, setNotifications] = useState<NotificationEntry[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [colorMode, setColorModeState] = useState<ColorMode>(getEffectiveMode());
   const isPremium = user.plan === 'premium';
+
+  function toggleColorMode() {
+    const next: ColorMode = colorMode === 'light' ? 'dark' : 'light';
+    setColorMode(next);
+    setColorModeState(next);
+  }
   const unreadNotifications = notifications.filter((n) => !n.read).length;
 
   const refreshInvites = useCallback(async () => {
@@ -537,12 +545,17 @@ function Workspace({ user, onLogout, onUserChanged }: {
         <div className="mt-auto">
           <div className="px-3 pb-1">
             <button
-              className="mb-1.5 flex w-full items-center justify-center gap-1.5 rounded-lg border border-edge bg-panel px-3 py-1.5 text-[12px] text-dim transition-colors hover:border-accent hover:text-fg"
+              className={`${headerBtn} mb-1.5 flex w-full items-center justify-center gap-1.5`}
+              onClick={toggleColorMode} title="Cambiar modo claro/oscuro">
+              {colorMode === 'light' ? '☀️ Modo claro' : '🌙 Modo oscuro'}
+            </button>
+            <button
+              className={`${headerBtn} mb-1.5 flex w-full items-center justify-center gap-1.5`}
               onClick={() => setShowConnections(true)}>
               🔗 Conexiones
             </button>
             <button
-              className="mb-1.5 flex w-full items-center justify-center gap-1.5 rounded-lg border border-edge bg-panel px-3 py-1.5 text-[12px] text-dim transition-colors hover:border-accent hover:text-fg"
+              className={`${headerBtn} mb-1.5 flex w-full items-center justify-center gap-1.5`}
               onClick={() => setShowAppearance(true)}>
               🎨 Apariencia{!isPremium && ' 🔒'}
             </button>

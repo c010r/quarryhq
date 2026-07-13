@@ -38,9 +38,9 @@ export default function SearchPalette({ onClose }: { onClose: () => void }) {
   const empty = 'p-6 text-center text-[13px] text-dim';
 
   return (
-    <div className="fixed inset-0 z-100 flex justify-center bg-black/70 px-3 pt-12 backdrop-blur-[2px] sm:pt-24"
+    <div className="fixed inset-0 z-100 flex justify-center bg-black/70 px-3 pt-12 backdrop-blur-[2px] animate-fade-in sm:pt-24"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="flex h-fit max-h-[60vh] w-full max-w-[560px] flex-col overflow-hidden rounded-2xl border border-edge bg-panel shadow-2xl shadow-black/50">
+      <div className="flex h-fit max-h-[60vh] w-full max-w-[560px] flex-col overflow-hidden rounded-2xl border border-edge bg-panel shadow-2xl shadow-black/50 animate-modal-in">
         <input autoFocus placeholder="Buscar tarjetas, notas, mensajes y canales…"
           value={query} onChange={(e) => setQuery(e.target.value)}
           className="border-b border-edge bg-transparent px-4.5 py-4 text-[15px] outline-none" />

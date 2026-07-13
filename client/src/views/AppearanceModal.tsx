@@ -4,6 +4,7 @@ import type { User } from '../types';
 import { THEME_PRESETS, BG_PRESETS } from '../theme';
 import { btnGhost, btnSmall, inputBase, modalBackdrop, modalBox, modalClose, sectionTitle } from '../ui';
 import { alertDialog } from '../dialog';
+import { type ColorMode, getEffectiveMode, setColorMode } from '../colorMode';
 
 const LOCK_MSG = 'La estética personalizada del escritorio es exclusiva de Premium.';
 
@@ -16,6 +17,12 @@ export default function AppearanceModal({ user, isPremium, onChanged, onClose }:
   const [busy, setBusy] = useState(false);
   const [customAccent, setCustomAccent] = useState(user.theme_accent ?? '#8b93f8');
   const [bgUrl, setBgUrl] = useState(user.theme_bg?.startsWith('https://') ? user.theme_bg : '');
+  const [colorMode, setColorModeState] = useState<ColorMode>(getEffectiveMode());
+
+  function pickColorMode(mode: ColorMode) {
+    setColorMode(mode);
+    setColorModeState(mode);
+  }
 
   const currentPreset = user.theme_preset ?? 'default';
   const currentBg = user.theme_bg ?? 'default';
@@ -46,8 +53,20 @@ export default function AppearanceModal({ user, isPremium, onChanged, onClose }:
           <h3 className="font-display text-lg font-bold">🎨 Apariencia{!isPremium && ' 🔒'}</h3>
           <button className={modalClose} onClick={onClose}>✕</button>
         </div>
+        <div>
+          <h4 className={sectionTitle}>Modo de la interfaz</h4>
+          <div className="flex gap-2">
+            <button className={swatchActive(colorMode === 'light')} style={{ flex: 1 }} onClick={() => pickColorMode('light')}>
+              ☀️ Claro
+            </button>
+            <button className={swatchActive(colorMode === 'dark')} style={{ flex: 1 }} onClick={() => pickColorMode('dark')}>
+              🌙 Oscuro
+            </button>
+          </div>
+        </div>
+
         {!isPremium && (
-          <p className="text-[13px] text-dim">Personalizar la estética del escritorio es exclusivo de Premium.</p>
+          <p className="text-[13px] text-dim">Personalizar la paleta y el fondo del escritorio es exclusivo de Premium.</p>
         )}
 
         <div>

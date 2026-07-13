@@ -41,7 +41,7 @@ export default function CalendarView({ lists, onOpenCard }: {
 
   const todayKey = toKey(new Date());
   const monthLabel = cursor.toLocaleDateString('es', { month: 'long', year: 'numeric' });
-  const navBtn = 'rounded-lg border border-edge bg-panel px-3 py-1 text-dim transition-colors hover:border-board hover:text-fg';
+  const navBtn = 'rounded-lg border border-edge bg-panel px-3 py-1 text-dim transition-colors hover:border-board hover:text-fg active:scale-[0.97]';
 
   return (
     <div className="min-w-0 p-3 sm:p-5">
