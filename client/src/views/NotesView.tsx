@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { get, post, patch, del, notifyPlanBlock, onWsEvent, sendWs } from '../api';
 import type { Backlink, Note, NoteMeta, NoteVersion, TagCount, Template } from '../types';
 import { renderMarkdown } from '../markdown';
+import { MD_COMMANDS, MD_CHEATSHEET, detectMenu, getCaretCoords, type EditorMenu, type MdCommand } from '../editor';
 import { navigate } from '../App';
 import { chip, emptyState, headerBtn, iconBtn, modalClose, sectionTitle, sideHeading, sideIcon, sideItem, sideLabel } from '../ui';
 import { alertDialog, confirmDialog, promptDialog } from '../dialog';
@@ -91,6 +92,31 @@ function VersionHistory({ noteId, isPremium, isViewer, onRestore, onClose }: {
   );
 }
 
+// Panel lateral con la guía de sintaxis markdown y atajos del editor
+function MdHelpPanel({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="fixed inset-y-0 right-0 z-60 flex w-full max-w-[340px] flex-col border-l border-edge bg-panel shadow-2xl shadow-black/40">
+      <div className="flex items-center justify-between border-b border-edge px-4 py-3.5 font-display font-bold">
+        📖 Guía Markdown
+        <button className={modalClose} onClick={onClose}>✕</button>
+      </div>
+      <div className="flex-1 overflow-y-auto p-4">
+        {MD_CHEATSHEET.map((sec) => (
+          <div key={sec.title} className="mb-4.5">
+            <h4 className={sectionTitle}>{sec.title}</h4>
+            {sec.entries.map((entry) => (
+              <div key={entry.syntax} className="flex items-baseline gap-2.5 py-1 text-[12.5px]">
+                <code className="min-w-[112px] shrink-0 whitespace-nowrap rounded-md border border-edge bg-raised px-1.5 py-0.5 font-mono text-[11.5px]">{entry.syntax}</code>
+                <span className="text-dim">{entry.desc}</span>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function NotesView({ noteId, notes, onChanged, isPremium, currentUserId }: {
   noteId?: number;
   notes: NoteMeta[];
@@ -101,7 +127,7 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
   const [detail, setDetail] = useState<NoteDetail | null>(null);
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
-  const [mode, setMode] = useState<'edit' | 'preview'>('edit');
+  const [mode, setMode] = useState<'edit' | 'split' | 'preview'>('edit');
   const [saveState, setSaveState] = useState<'saved' | 'saving' | 'dirty'>('saved');
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadedId = useRef<number | null>(null);
@@ -112,8 +138,16 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
   const [templates, setTemplates] = useState<Template[]>([]);
   const [showTemplates, setShowTemplates] = useState(false);
   const [showShare, setShowShare] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  const [listFilter, setListFilter] = useState('');
   const isViewer = detail?.note.myRole === 'viewer';
   const [viewers, setViewers] = useState<PresenceViewer[]>([]);
+
+  // Menú flotante del editor: comandos "/" y autocompletado de "[["
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  const [menu, setMenu] = useState<EditorMenu | null>(null);
+  const [menuIndex, setMenuIndex] = useState(0);
+  const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
 
   // Presencia: le avisa al resto quién está mirando esta nota ahora
   useEffect(() => {
@@ -184,6 +218,7 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
       setTitle(data.note.title);
       setContent(data.note.content);
       setSaveState('saved');
+      setMenu(null);
       loadedId.current = id;
     } catch {
       // Borrada, o perdiste el acceso (te sacaron como colaborador)
@@ -239,12 +274,207 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
     }
   }
 
+  // ---------- Menú de comandos "/" y autocompletado de "[[" ----------
+
+  const slashOptions: MdCommand[] = menu?.type === 'slash'
+    ? MD_COMMANDS.filter((c) =>
+        (c.label + ' ' + c.keywords + ' ' + c.id).toLowerCase().includes(menu.query.toLowerCase()))
+    : [];
+
+  const wikiQuery = menu?.type === 'wiki' ? menu.query.trim() : '';
+  const wikiMatches: NoteMeta[] = menu?.type === 'wiki'
+    ? notes.filter((n) => n.id !== detail?.note.id && n.title.toLowerCase().includes(wikiQuery.toLowerCase())).slice(0, 8)
+    : [];
+  const wikiCanCreate = menu?.type === 'wiki' && wikiQuery.length > 0 &&
+    !notes.some((n) => n.title.toLowerCase() === wikiQuery.toLowerCase());
+  const menuCount = menu?.type === 'slash' ? slashOptions.length : wikiMatches.length + (wikiCanCreate ? 1 : 0);
+
+  // Recalcula el menú contextual a partir del texto y la posición del caret
+  function updateMenu(ta: HTMLTextAreaElement) {
+    if (isViewer) return;
+    const next = detectMenu(ta.value, ta.selectionStart);
+    if (next) {
+      const coords = getCaretCoords(ta, next.start);
+      setMenuPos({
+        top: coords.top + 26,
+        left: Math.max(8, Math.min(coords.left, ta.clientWidth - 300)),
+      });
+      setMenuIndex((prev) => (menu && menu.start === next.start ? prev : 0));
+    }
+    setMenu(next);
+  }
+
+  // Aplica una edición programática y restaura foco + caret
+  function applyEdit(next: string, selStart: number, selEnd = selStart) {
+    setContent(next);
+    scheduleSave(title, next);
+    setMenu(null);
+    requestAnimationFrame(() => {
+      const ta = taRef.current;
+      if (!ta) return;
+      ta.focus();
+      ta.setSelectionRange(selStart, selEnd);
+      updateMenu(ta); // reabre el menú si el snippet deja "[[" antes del caret
+    });
+  }
+
+  function runSlashCommand(cmd: MdCommand) {
+    const ta = taRef.current;
+    if (!ta || !menu) return;
+    const caret = ta.selectionStart;
+    const cursorIdx = cmd.snippet.indexOf('$0');
+    const clean = cmd.snippet.replace('$0', '');
+    const next = content.slice(0, menu.start) + clean + content.slice(caret);
+    applyEdit(next, menu.start + (cursorIdx >= 0 ? cursorIdx : clean.length));
+  }
+
+  function insertWikiLink(linkTitle: string) {
+    const ta = taRef.current;
+    if (!ta || !menu) return;
+    const caret = ta.selectionEnd; // cubre también el placeholder seleccionado por la barra
+    let rest = content.slice(caret);
+    if (rest.startsWith(']]')) rest = rest.slice(2); // el snippet [[]] ya dejó el cierre
+    const next = content.slice(0, menu.start) + `[[${linkTitle}]]` + rest;
+    applyEdit(next, menu.start + linkTitle.length + 4);
+  }
+
+  function pickMenuOption(index: number) {
+    if (!menu) return;
+    if (menu.type === 'slash') {
+      if (slashOptions[index]) runSlashCommand(slashOptions[index]);
+    } else if (index < wikiMatches.length) {
+      insertWikiLink(wikiMatches[index].title);
+    } else if (wikiCanCreate) {
+      insertWikiLink(wikiQuery);
+    }
+  }
+
+  // ---------- Barra de formato ----------
+
+  function wrapSelection(before: string, after: string, placeholder: string) {
+    const ta = taRef.current;
+    if (!ta) return;
+    const s = ta.selectionStart, e = ta.selectionEnd;
+    const sel = content.slice(s, e) || placeholder;
+    const next = content.slice(0, s) + before + sel + after + content.slice(e);
+    applyEdit(next, s + before.length, s + before.length + sel.length);
+  }
+
+  // Añade (o quita, si ya está) un prefijo a cada línea de la selección
+  function prefixLines(prefix: string) {
+    const ta = taRef.current;
+    if (!ta) return;
+    const s = ta.selectionStart, e = ta.selectionEnd;
+    const lineStart = content.lastIndexOf('\n', s - 1) + 1;
+    const nextBreak = content.indexOf('\n', e);
+    const lineEnd = nextBreak === -1 ? content.length : nextBreak;
+    const block = content.slice(lineStart, lineEnd);
+    const toggled = block.split('\n')
+      .map((l) => l.startsWith(prefix) ? l.slice(prefix.length) : prefix + l)
+      .join('\n');
+    const next = content.slice(0, lineStart) + toggled + content.slice(lineEnd);
+    applyEdit(next, lineStart, lineStart + toggled.length);
+  }
+
+  function insertBlockAtCaret(snippet: string) {
+    const ta = taRef.current;
+    if (!ta) return;
+    const caret = ta.selectionStart;
+    const needsBreak = caret > 0 && content[caret - 1] !== '\n';
+    const clean = (needsBreak ? '\n' : '') + snippet.replace('$0', '');
+    const cursorIdx = snippet.indexOf('$0');
+    const next = content.slice(0, caret) + clean + content.slice(ta.selectionEnd);
+    applyEdit(next, caret + (cursorIdx >= 0 ? cursorIdx + (needsBreak ? 1 : 0) : clean.length));
+  }
+
+  function onEditorKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (menu && menuCount > 0) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); setMenuIndex((i) => (i + 1) % menuCount); return; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); setMenuIndex((i) => (i - 1 + menuCount) % menuCount); return; }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pickMenuOption(menuIndex); return; }
+      if (e.key === 'Escape') { e.preventDefault(); setMenu(null); return; }
+    }
+    if (e.ctrlKey || e.metaKey) {
+      const k = e.key.toLowerCase();
+      if (k === 'b') { e.preventDefault(); wrapSelection('**', '**', 'negrita'); }
+      else if (k === 'i') { e.preventDefault(); wrapSelection('*', '*', 'cursiva'); }
+      else if (k === 'e') { e.preventDefault(); wrapSelection('`', '`', 'código'); }
+    }
+  }
+
+  const words = content.trim() ? content.trim().split(/\s+/).length : 0;
+  const visibleNotes = (filteredNotes ?? notes).filter((n) =>
+    !listFilter.trim() || n.title.toLowerCase().includes(listFilter.trim().toLowerCase()));
+
+  const mdBtn = 'flex h-[26px] min-w-[28px] items-center justify-center rounded-md px-1.5 text-xs font-semibold text-dim transition-colors hover:bg-hover hover:text-fg';
+  const toolbarSep = 'mx-1.5 h-4 w-px bg-edge';
+  const slashItem = (selected: boolean) =>
+    `flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] transition-colors ${selected ? 'bg-accent/10' : 'hover:bg-hover'}`;
+  const cmdIcon = 'flex h-[22px] w-7 shrink-0 items-center justify-center rounded-md border border-edge bg-ink text-[10.5px] text-dim';
+
   const toggleBtn = (active: boolean) =>
     `px-3 py-1.5 text-xs transition-colors ${active ? 'bg-note/10 font-semibold text-note' : 'text-dim hover:text-fg'}`;
+
+  const editorPane = (
+    <div className="relative flex min-w-0 flex-1">
+      <textarea ref={taRef} value={content}
+        placeholder={'Escribe en markdown…\n\nEscribe "/" al inicio de una línea para el menú de comandos, o "[[" para vincular otra nota.'}
+        readOnly={isViewer}
+        onChange={(e) => {
+          setContent(e.target.value);
+          scheduleSave(title, e.target.value);
+          updateMenu(e.target);
+        }}
+        onClick={(e) => updateMenu(e.currentTarget)}
+        onKeyUp={(e) => {
+          if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) updateMenu(e.currentTarget);
+        }}
+        onKeyDown={onEditorKeyDown}
+        onBlur={() => setTimeout(() => setMenu(null), 150)}
+        className="min-w-0 flex-1 resize-none bg-transparent px-6 py-5 font-mono text-[13.5px] leading-[1.65] outline-none" />
+      {menu && menuCount > 0 && (
+        <div className="absolute z-30 max-h-[280px] w-[290px] overflow-y-auto rounded-xl border border-edge bg-raised p-1 shadow-2xl shadow-black/40"
+          style={{ top: menuPos.top, left: menuPos.left }}>
+          {menu.type === 'slash' && slashOptions.map((c, i) => (
+            <button key={c.id} className={slashItem(i === menuIndex)}
+              onMouseDown={(e) => { e.preventDefault(); runSlashCommand(c); }}
+              onMouseEnter={() => setMenuIndex(i)}>
+              <span className={cmdIcon}>{c.icon}</span>
+              <span>{c.label}</span>
+              <span className="ml-auto whitespace-nowrap font-mono text-[11px] text-dim">{c.hint}</span>
+            </button>
+          ))}
+          {menu.type === 'wiki' && (
+            <>
+              {wikiMatches.map((n, i) => (
+                <button key={n.id} className={slashItem(i === menuIndex)}
+                  onMouseDown={(e) => { e.preventDefault(); insertWikiLink(n.title); }}
+                  onMouseEnter={() => setMenuIndex(i)}>
+                  <span className={`${cmdIcon} text-note`}>◆</span>
+                  <span className="truncate">{n.title}</span>
+                </button>
+              ))}
+              {wikiCanCreate && (
+                <button className={slashItem(menuIndex === wikiMatches.length)}
+                  onMouseDown={(e) => { e.preventDefault(); insertWikiLink(wikiQuery); }}
+                  onMouseEnter={() => setMenuIndex(wikiMatches.length)}>
+                  <span className={cmdIcon}>＋</span>
+                  <span className="truncate">Crear nota «{wikiQuery}»</span>
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div className="flex h-full min-w-0 flex-col md:flex-row">
       <div className="max-h-56 w-full shrink-0 overflow-y-auto border-b border-edge p-2.5 md:max-h-none md:w-48 md:border-b-0 md:border-r lg:w-[250px]">
+        <input value={listFilter} placeholder="Filtrar notas…"
+          onChange={(e) => setListFilter(e.target.value)}
+          className="mb-1.5 w-full rounded-lg border border-edge bg-ink px-2.5 py-1.5 text-xs outline-none transition-colors focus:border-accent" />
         <div className={sideHeading}>Acciones</div>
         <button className={sideItem(false, 'note')} onClick={openDailyNote}>
           <span className={sideIcon}>☀</span><span className={sideLabel}>Nota diaria de hoy</span>
@@ -279,14 +509,14 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
         <div className={sideHeading}>
           {activeTag ? `Notas con #${activeTag}` : 'Todas las notas'}
         </div>
-        {(filteredNotes ?? notes).map((n) => (
+        {visibleNotes.map((n) => (
           <button key={n.id} className={sideItem(detail?.note.id === n.id, 'note')}
             onClick={() => navigate(`/notes/${n.id}`)}>
             <span className={`${sideIcon} text-note`}>◆</span><span className={sideLabel}>{n.title}</span>
             {n.shared && <span className="shrink-0 text-[11px] text-dim" title={`Compartida por @${n.owner_username}`}>🤝</span>}
           </button>
         ))}
-        {(filteredNotes ?? notes).length === 0 && <div className="p-6 text-center text-[13px] text-dim">Sin notas.</div>}
+        {visibleNotes.length === 0 && <div className="p-6 text-center text-[13px] text-dim">Sin notas.</div>}
       </div>
 
       {detail ? (
@@ -308,6 +538,7 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
             <PresenceAvatars viewers={viewers} currentUserId={currentUserId} />
             <div className="flex overflow-hidden rounded-lg border border-edge bg-ink">
               <button className={toggleBtn(mode === 'edit')} onClick={() => setMode('edit')}>Editar</button>
+              <button className={`${toggleBtn(mode === 'split')} hidden sm:block`} onClick={() => setMode('split')}>Dividida</button>
               <button className={toggleBtn(mode === 'preview')} onClick={() => setMode('preview')}>Vista previa</button>
             </div>
             <button className={headerBtn} onClick={() => setShowHistory(true)} title="Historial de versiones">🕘 Historial</button>
@@ -323,14 +554,35 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
             )}
           </div>
 
+          {mode !== 'preview' && !isViewer && (
+            <div className="flex shrink-0 flex-wrap items-center gap-0.5 border-b border-edge px-4 py-1.5">
+              <button className={mdBtn} title="Negrita (Ctrl+B)" onClick={() => wrapSelection('**', '**', 'negrita')}><b>B</b></button>
+              <button className={mdBtn} title="Cursiva (Ctrl+I)" onClick={() => wrapSelection('*', '*', 'cursiva')}><i>I</i></button>
+              <button className={mdBtn} title="Tachado" onClick={() => wrapSelection('~~', '~~', 'tachado')}><s>S</s></button>
+              <button className={mdBtn} title="Código en línea (Ctrl+E)" onClick={() => wrapSelection('`', '`', 'código')}>‹›</button>
+              <span className={toolbarSep} />
+              <button className={mdBtn} title="Encabezado 1" onClick={() => prefixLines('# ')}>H1</button>
+              <button className={mdBtn} title="Encabezado 2" onClick={() => prefixLines('## ')}>H2</button>
+              <button className={mdBtn} title="Encabezado 3" onClick={() => prefixLines('### ')}>H3</button>
+              <span className={toolbarSep} />
+              <button className={mdBtn} title="Lista" onClick={() => prefixLines('- ')}>•</button>
+              <button className={mdBtn} title="Tarea" onClick={() => prefixLines('- [ ] ')}>☐</button>
+              <button className={mdBtn} title="Cita" onClick={() => prefixLines('> ')}>❝</button>
+              <span className={toolbarSep} />
+              <button className={`${mdBtn} text-note`} title="Vincular nota" onClick={() => wrapSelection('[[', ']]', 'Título')}>◆</button>
+              <button className={mdBtn} title="Enlace web" onClick={() => wrapSelection('[', '](https://)', 'texto')}>🔗</button>
+              <button className={mdBtn} title="Tabla" onClick={() => insertBlockAtCaret('| Columna 1 | Columna 2 |\n| --- | --- |\n| $0 |  |')}>▦</button>
+              <button className={mdBtn} title="Divisor" onClick={() => insertBlockAtCaret('---\n$0')}>—</button>
+              <span className="ml-auto hidden pr-1 text-[11.5px] text-dim sm:inline">{words} palabras · {content.length} caracteres</span>
+              <button className={mdBtn} title="Guía Markdown" onClick={() => setShowHelp(true)}>?</button>
+            </div>
+          )}
+
           <div className="flex min-w-0 flex-1 overflow-hidden">
-            {mode === 'edit' ? (
-              <textarea value={content} placeholder="Escribe en markdown… usa [[Título]] para enlazar otras notas."
-                onChange={(e) => { setContent(e.target.value); scheduleSave(title, e.target.value); }}
-                readOnly={isViewer}
-                className="min-w-0 flex-1 resize-none bg-transparent px-6 py-5 font-mono text-[13.5px] leading-[1.65] outline-none" />
-            ) : (
-              <div className="md min-w-0 flex-1 overflow-y-auto px-6 py-5" onClick={onPreviewClick}
+            {mode !== 'preview' && editorPane}
+            {mode !== 'edit' && (
+              <div className={`md min-w-0 flex-1 overflow-y-auto px-6 py-5 ${mode === 'split' ? 'border-l border-edge' : ''}`}
+                onClick={onPreviewClick}
                 dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }} />
             )}
           </div>
@@ -386,6 +638,7 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
         <ShareModal type="note" resourceId={detail.note.id} resourceName={detail.note.title}
           currentUserId={currentUserId} isPremium={isPremium} onClose={() => setShowShare(false)} />
       )}
+      {showHelp && <MdHelpPanel onClose={() => setShowHelp(false)} />}
     </div>
   );
 }
