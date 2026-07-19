@@ -1726,9 +1726,17 @@ app.get('/api/graph', requireAuth, h(async (req: AuthedRequest, res) => {
   ];
   const nodeKeys = new Set(nodes.map((n) => n.key));
   const links = await all("SELECT * FROM links WHERE source_type != 'message'");
-  const edges = links
-    .map((l) => ({ source: `${l.source_type}:${l.source_id}`, target: `${l.target_type}:${l.target_id}`, kind: l.kind }))
-    .filter((e) => nodeKeys.has(e.source) && nodeKeys.has(e.target));
+  // Las menciones [[nota]] en mensajes se elevan al canal que las contiene:
+  // una arista canal→nota por par (DISTINCT), sin el ruido de cada mensaje.
+  const mentionLinks = await all(`
+    SELECT DISTINCT messages.channel_id, links.target_type, links.target_id
+    FROM links JOIN messages ON messages.id = links.source_id
+    WHERE links.source_type = 'message'
+  `);
+  const edges = [
+    ...links.map((l) => ({ source: `${l.source_type}:${l.source_id}`, target: `${l.target_type}:${l.target_id}`, kind: l.kind })),
+    ...mentionLinks.map((l) => ({ source: `channel:${l.channel_id}`, target: `${l.target_type}:${l.target_id}`, kind: 'mention' })),
+  ].filter((e) => nodeKeys.has(e.source) && nodeKeys.has(e.target));
   res.json({ nodes, edges });
 }));
 

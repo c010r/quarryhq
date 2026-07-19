@@ -256,7 +256,7 @@ export default function GraphView() {
                   stroke={touchesHover ? nodeColor(hoverNode!) : nodeColor(a) + '55'}
                   strokeWidth={touchesHover ? 2 : 1.5}
                   opacity={dim ? 0.08 : 1}
-                  strokeDasharray={edge.kind === 'manual' ? '4 3' : undefined} />
+                  strokeDasharray={edge.kind === 'manual' ? '4 3' : edge.kind === 'mention' ? '2 3' : undefined} />
               );
             })}
             {positions.map((node) => {
