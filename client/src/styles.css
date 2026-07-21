@@ -95,7 +95,9 @@
  * Los wiki-links (#/wiki/…) son la firma del producto: hilo punteado teal.
  */
 @layer components {
-  .md { line-height: 1.65; overflow-wrap: break-word; }
+  /* scrollbar-gutter reserva el espacio de la scrollbar siempre, para que no
+     tape la esquina de resize de los embeds de Drive cuando la nota scrollea */
+  .md { line-height: 1.65; overflow-wrap: break-word; scrollbar-gutter: stable; }
   .md a { color: var(--color-accent); text-decoration: none; }
   .md a[href^="#/wiki/"] {
     color: var(--color-chat);
