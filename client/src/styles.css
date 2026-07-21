@@ -134,21 +134,34 @@
   .md pre code { background: transparent; padding: 0; }
   .md blockquote { border-left: 3px solid var(--color-note); padding-left: 12px; color: var(--color-dim); margin-bottom: 0.7em; }
   .md strong { font-weight: 600; }
-  .drive-embed { display: block; margin-bottom: 0.7em; border-radius: 8px; }
+  .drive-embed { display: block; margin-bottom: 0.7em; border-radius: 8px; position: relative; }
   .drive-frame {
     box-sizing: border-box;
-    width: 100%;
     aspect-ratio: 16 / 9;
     border: 1px solid var(--color-edge);
-    resize: both;
     overflow: hidden;
-    min-width: 200px;
-    min-height: 120px;
-    max-width: 100%;
-    /* Deja un margen del lado del contenedor (no del iframe) para poder
-       agarrar la esquina de resize sin que el documento de adentro (otro
-       origen) se quede con el mousedown. */
-    padding: 0 10px 10px 0;
+    min-width: 160px;
   }
   .drive-frame-inner { display: block; width: 100%; height: 100%; border: 0; }
+  .drive-size-controls {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    display: flex;
+    gap: 4px;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .drive-frame:hover .drive-size-controls,
+  .drive-frame:focus-within .drive-size-controls { opacity: 1; }
+  .drive-size-btn {
+    font: 600 11px var(--font-sans, inherit);
+    padding: 2px 7px;
+    border-radius: 6px;
+    border: 1px solid var(--color-edge);
+    background: var(--color-panel);
+    color: var(--color-dim);
+    cursor: pointer;
+  }
+  .drive-size-btn.active { background: var(--color-accent); border-color: var(--color-accent); color: #fff; }
 }

@@ -35,13 +35,17 @@ renderer.link = ({ href, title, tokens }: Tokens.Link) => {
 // directo — el iframe del visor de Drive no tiene ese problema.
 const DRIVE_PREVIEW_RE = /^https:\/\/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)\/preview$/;
 const DRIVE_EMBED_KINDS = ['image', 'video', 'pdf'];
-// El tamaño (si el usuario redimensionó el embed) va en el texto alt, no en
-// el título markdown estándar ("...") — ese título no sobrevive al paso por
-// escapeHtml (convierte " en &quot; antes de que marked parsee la sintaxis
-// de título). El alt es texto plano, así que un prefijo con ":" es seguro.
-// Formato: ![kind:anchoxalto:nombre](url). Ver NotesView.tsx, que reescribe
-// ese prefijo al soltar el mouse tras un resize.
-const DRIVE_SIZE_RE = /^(\d{2,4})x(\d{2,4}):/;
+// El tamaño va en el texto alt, no en el título markdown estándar ("...") —
+// ese título no sobrevive al paso por escapeHtml (convierte " en &quot;
+// antes de que marked parsee la sintaxis de título). El alt es texto
+// plano, así que un prefijo con ":" es seguro.
+// Formato: ![kind:N:nombre](url), N de 1 a 4 = 25/50/75/100% del ancho.
+// Un dígito discreto en vez de arrastrar y guardar píxeles exactos: más
+// simple de leer/escribir a mano y sin los líos de un resize nativo sobre
+// un <iframe> de otro origen (scrollbar tapando el handle, el documento de
+// adentro quedándose con el mousedown, etc.)
+const DRIVE_SIZE_RE = /^([1-4]):/;
+const DRIVE_SIZE_STEPS = [25, 50, 75, 100];
 
 renderer.image = ({ href, text }: Tokens.Image) => {
   const previewMatch = DRIVE_PREVIEW_RE.exec(href);
@@ -49,14 +53,12 @@ renderer.image = ({ href, text }: Tokens.Image) => {
   if (previewMatch && kind) {
     let label = text.slice(kind.length + 1);
     const sizeMatch = DRIVE_SIZE_RE.exec(label);
-    const style = sizeMatch ? ` style="width:${sizeMatch[1]}px;height:${sizeMatch[2]}px"` : '';
+    const step = sizeMatch ? Number(sizeMatch[1]) : 4;
     if (sizeMatch) label = label.slice(sizeMatch[0].length);
-    // El resize vive en un <div> contenedor, no en el <iframe> directo: si el
-    // iframe llegara justo hasta la esquina, el documento de adentro (la
-    // página de Drive, otro origen) puede quedarse con el mousedown y el
-    // navegador nunca dispara el handle nativo de resize. El padding deja un
-    // margen libre del lado del contenedor para poder agarrarlo siempre.
-    return `<div data-drive-id="${previewMatch[1]}" data-drive-kind="${kind}" class="drive-embed drive-frame"${style}><iframe src="https://drive.google.com/file/d/${previewMatch[1]}/preview" title="${escapeHtml(label)}" class="drive-frame-inner" loading="lazy" sandbox="allow-scripts allow-same-origin allow-presentation allow-popups" allow="autoplay"></iframe></div>`;
+    const id = previewMatch[1];
+    const controls = [1, 2, 3, 4].map((n) =>
+      `<button type="button" data-drive-size="${n}" class="drive-size-btn${n === step ? ' active' : ''}">${DRIVE_SIZE_STEPS[n - 1]}%</button>`).join('');
+    return `<div data-drive-id="${id}" data-drive-kind="${kind}" class="drive-embed drive-frame" style="width:${DRIVE_SIZE_STEPS[step - 1]}%"><iframe src="https://drive.google.com/file/d/${id}/preview" title="${escapeHtml(label)}" class="drive-frame-inner" loading="lazy" sandbox="allow-scripts allow-same-origin allow-presentation allow-popups" allow="autoplay"></iframe><div class="drive-size-controls">${controls}</div></div>`;
   }
   return escapeHtml(text);
 };
