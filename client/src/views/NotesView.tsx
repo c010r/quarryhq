@@ -4,6 +4,7 @@ import type { Backlink, Note, NoteMeta, NoteVersion, TagCount, Template } from '
 import { renderMarkdown } from '../markdown';
 import { MD_COMMANDS, MD_CHEATSHEET, detectMenu, getCaretCoords, type EditorMenu, type MdCommand } from '../editor';
 import { pickDriveFile, driveFileSnippet } from '../googleDrive';
+import { buildZip } from '../zip';
 import { navigate } from '../App';
 import { chip, emptyState, headerBtn, iconBtn, modalClose, sectionTitle, sideHeading, sideIcon, sideItem, sideLabel } from '../ui';
 import { alertDialog, confirmDialog, promptDialog } from '../dialog';
@@ -264,6 +265,86 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
     onChanged();
     navigate('/notes');
     setDetail(null);
+  }
+
+  // ---------- Exportar ----------
+
+  function sanitizeFilename(name: string): string {
+    return name.trim().replace(/[\\/:*?"<>|]/g, '-').slice(0, 120) || 'nota';
+  }
+
+  function downloadBlob(blob: Blob, filename: string) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  // .md conserva tal cual el texto de la nota — los [[wikilinks]] ya usan la
+  // misma sintaxis que Obsidian, así que no hace falta transformar nada.
+  async function exportMarkdown() {
+    if (!detail) return;
+    const linked = new Map<number, string>();
+    for (const o of detail.outgoing) linked.set(o.id, o.title);
+    for (const b of detail.backlinks) if (b.source_type === 'note' && b.label) linked.set(b.source_id, b.label);
+
+    if (linked.size === 0) {
+      downloadBlob(new Blob([content], { type: 'text/markdown' }), `${sanitizeFilename(title)}.md`);
+      return;
+    }
+
+    const includeLinked = await confirmDialog(
+      `Esta nota está vinculada con ${linked.size} nota${linked.size === 1 ? '' : 's'} más. ¿Incluirlas para mantener los enlaces al importar en Obsidian?`,
+      { confirmText: 'Incluir vinculadas (.zip)', cancelText: 'Solo esta nota' });
+
+    if (!includeLinked) {
+      downloadBlob(new Blob([content], { type: 'text/markdown' }), `${sanitizeFilename(title)}.md`);
+      return;
+    }
+
+    // BFS sobre el grafo de enlaces (saliente y entrante) para juntar todo
+    // el componente conectado, no solo los vecinos directos.
+    const visited = new Map<number, { title: string; content: string }>();
+    visited.set(detail.note.id, { title, content });
+    const queue = [...linked.entries()].map(([id, t]) => ({ id, title: t }));
+    while (queue.length) {
+      const next = queue.shift()!;
+      if (visited.has(next.id)) continue;
+      const data = await get<NoteDetail>(`/api/notes/${next.id}`);
+      visited.set(next.id, { title: data.note.title, content: data.note.content });
+      for (const o of data.outgoing) if (!visited.has(o.id)) queue.push(o);
+      for (const b of data.backlinks) {
+        if (b.source_type === 'note' && b.label && !visited.has(b.source_id)) queue.push({ id: b.source_id, title: b.label });
+      }
+    }
+
+    const files = [...visited.values()].map((n) => ({ name: `${sanitizeFilename(n.title)}.md`, content: n.content }));
+    downloadBlob(buildZip(files), `${sanitizeFilename(title)}-obsidian.zip`);
+  }
+
+  // PDF vía el diálogo nativo de impresión del navegador ("Guardar como
+  // PDF"): no agrega ninguna librería de generación de PDF solo para esto.
+  function exportPdf() {
+    const win = window.open('', '_blank');
+    if (!win) { alertDialog('El navegador bloqueó la ventana de impresión. Habilitá los popups para este sitio.'); return; }
+    const escaped = title.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escaped}</title><style>
+      body { font-family: Georgia, 'Times New Roman', serif; max-width: 720px; margin: 40px auto; color: #1a1a1a; line-height: 1.6; }
+      h1 { font-size: 1.6em; margin-bottom: 0.3em; }
+      h1, h2, h3 { font-family: system-ui, sans-serif; }
+      code { background: #f0f0f0; padding: 1px 5px; border-radius: 4px; font-size: 0.9em; }
+      pre { background: #f0f0f0; padding: 10px; border-radius: 6px; overflow-x: auto; }
+      pre code { background: transparent; padding: 0; }
+      blockquote { border-left: 3px solid #ccc; padding-left: 12px; color: #555; margin-left: 0; }
+      a { color: #4550e5; }
+      .drive-embed { display: none; } /* el visor de Drive no imprime bien */
+    </style></head><body><h1>${escaped}</h1>${renderMarkdown(content)}</body></html>`);
+    win.document.close();
+    win.onload = () => win.print();
   }
 
   // Botones de tamaño (25/50/75/100%) y alineación (izq/centro/der) sobre un
@@ -586,6 +667,8 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
               <button className={`${toggleBtn(mode === 'split')} hidden sm:block`} onClick={() => setMode('split')}>Dividida</button>
               <button className={toggleBtn(mode === 'preview')} onClick={() => setMode('preview')}>Vista previa</button>
             </div>
+            <button className={iconBtn} onClick={exportMarkdown} title="Descargar como .md">⬇ md</button>
+            <button className={iconBtn} onClick={exportPdf} title="Descargar como PDF">⬇ PDF</button>
             <button className={headerBtn} onClick={() => setShowHistory(true)} title="Historial de versiones">🕘 Historial</button>
             {!isViewer && (
               <button className={iconBtn} onClick={saveAsTemplate}
