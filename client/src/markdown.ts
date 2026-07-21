@@ -51,7 +51,12 @@ renderer.image = ({ href, text }: Tokens.Image) => {
     const sizeMatch = DRIVE_SIZE_RE.exec(label);
     const style = sizeMatch ? ` style="width:${sizeMatch[1]}px;height:${sizeMatch[2]}px"` : '';
     if (sizeMatch) label = label.slice(sizeMatch[0].length);
-    return `<iframe src="https://drive.google.com/file/d/${previewMatch[1]}/preview" title="${escapeHtml(label)}" data-drive-id="${previewMatch[1]}" data-drive-kind="${kind}" class="drive-embed drive-frame" loading="lazy" sandbox="allow-scripts allow-same-origin allow-presentation allow-popups" allow="autoplay"${style}></iframe>`;
+    // El resize vive en un <div> contenedor, no en el <iframe> directo: si el
+    // iframe llegara justo hasta la esquina, el documento de adentro (la
+    // página de Drive, otro origen) puede quedarse con el mousedown y el
+    // navegador nunca dispara el handle nativo de resize. El padding deja un
+    // margen libre del lado del contenedor para poder agarrarlo siempre.
+    return `<div data-drive-id="${previewMatch[1]}" data-drive-kind="${kind}" class="drive-embed drive-frame"${style}><iframe src="https://drive.google.com/file/d/${previewMatch[1]}/preview" title="${escapeHtml(label)}" class="drive-frame-inner" loading="lazy" sandbox="allow-scripts allow-same-origin allow-presentation allow-popups" allow="autoplay"></iframe></div>`;
   }
   return escapeHtml(text);
 };
