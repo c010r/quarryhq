@@ -648,7 +648,12 @@ export default function App() {
   // logout, o tras guardar un cambio de tema en AppearanceModal)
   useEffect(() => { applyTheme(user); }, [user]);
 
-  if (loading) return <div className={`${emptyState} h-screen`}>Cargando…</div>;
+  if (loading) return (
+    <div className={`${emptyState} h-screen`}>
+      <div className="h-7 w-7 animate-spin rounded-full border-2 border-edge border-t-accent" aria-hidden />
+      Cargando…
+    </div>
+  );
   const resetMatch = location.hash.match(/^#\/reset\/([a-f0-9]{64})$/);
   if (resetMatch) return <ResetPassword token={resetMatch[1]} onAuth={onAuth} />;
   if (!user) return <Login onAuth={onAuth} />;

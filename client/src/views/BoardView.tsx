@@ -9,7 +9,8 @@ import AutomationModal from './AutomationModal';
 import ShareModal from './ShareModal';
 import ActivityModal from './ActivityModal';
 import PresenceAvatars, { type PresenceViewer } from './PresenceAvatars';
-import { avatarColor, btnGhost, btnSmall, emptyState, headerBtn, iconBtn, mainHeader, viewTitle } from '../ui';
+import MoreMenu from './MoreMenu';
+import { avatarColor, btnGhost, btnSmall, emptyState, headerBtn, mainHeader, viewTitle } from '../ui';
 import { confirmDialog } from '../dialog';
 
 function CardBadges({ card }: { card: Card }) {
@@ -97,7 +98,6 @@ export default function BoardView({ boardId, initialCardId, isPremium, currentUs
   const [showRules, setShowRules] = useState(false);
   const [showShare, setShowShare] = useState(false);
   const [showActivity, setShowActivity] = useState(false);
-  const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [viewers, setViewers] = useState<PresenceViewer[]>([]);
 
   const load = useCallback(async () => {
@@ -188,26 +188,14 @@ export default function BoardView({ boardId, initialCardId, isPremium, currentUs
           <button className={headerBtn} onClick={() => setShowShare(true)}>🤝 Compartir</button>
           <button className={headerBtn} onClick={() => setShowActivity(true)}>📋 Actividad</button>
         </div>
-        <div className="relative sm:hidden">
-          <button className={iconBtn} aria-label="Más acciones" onClick={() => setShowMoreMenu((v) => !v)}>⋯</button>
-          {showMoreMenu && (
-            <>
-              <div className="fixed inset-0 z-10" onClick={() => setShowMoreMenu(false)} />
-              <div className="absolute right-0 top-full z-20 mt-1.5 flex w-48 animate-pop-in flex-col gap-0.5 rounded-lg border border-edge bg-panel p-1.5 shadow-xl shadow-black/40">
-                {!isViewer && (
-                  <button className="rounded-md px-2.5 py-2 text-left text-[13px] text-dim transition-colors hover:bg-hover hover:text-fg"
-                    onClick={() => { setShowMoreMenu(false); isPremium ? setShowRules(true) : notifyPlanBlock('Las automatizaciones estilo Butler son parte de Premium.'); }}>
-                    ⚙ Automatización{!isPremium && ' 🔒'}
-                  </button>
-                )}
-                <button className="rounded-md px-2.5 py-2 text-left text-[13px] text-dim transition-colors hover:bg-hover hover:text-fg"
-                  onClick={() => { setShowMoreMenu(false); setShowShare(true); }}>🤝 Compartir</button>
-                <button className="rounded-md px-2.5 py-2 text-left text-[13px] text-dim transition-colors hover:bg-hover hover:text-fg"
-                  onClick={() => { setShowMoreMenu(false); setShowActivity(true); }}>📋 Actividad</button>
-              </div>
-            </>
-          )}
-        </div>
+        <MoreMenu className="sm:hidden" actions={[
+          ...(!isViewer ? [{
+            label: `⚙ Automatización${!isPremium ? ' 🔒' : ''}`,
+            onClick: () => isPremium ? setShowRules(true) : notifyPlanBlock('Las automatizaciones estilo Butler son parte de Premium.'),
+          }] : []),
+          { label: '🤝 Compartir', onClick: () => setShowShare(true) },
+          { label: '📋 Actividad', onClick: () => setShowActivity(true) },
+        ]} />
         {isViewer && <span className="text-[12px] text-dim">👁 solo lectura</span>}
       </div>
       <div className="min-w-0 flex-1 overflow-auto">

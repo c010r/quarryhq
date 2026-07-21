@@ -10,6 +10,29 @@ import { chip, emptyState, headerBtn, iconBtn, modalClose, sectionTitle, sideHea
 import { alertDialog, confirmDialog, promptDialog } from '../dialog';
 import ShareModal from './ShareModal';
 import PresenceAvatars, { type PresenceViewer } from './PresenceAvatars';
+import MoreMenu from './MoreMenu';
+
+// Shell compartido de los paneles laterales (historial, guía): entra
+// deslizando, con backdrop para cerrar tocando afuera y también con Escape.
+function SidePanel({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return (
+    <>
+      <div className="fixed inset-0 z-50 animate-fade-in bg-black/40" onClick={onClose} />
+      <div className="fixed inset-y-0 right-0 z-60 flex w-full max-w-[340px] animate-panel-in flex-col border-l border-edge bg-panel shadow-2xl shadow-black/40">
+        <div className="flex items-center justify-between border-b border-edge px-4 py-3.5 font-display font-bold">
+          {title}
+          <button className={modalClose} onClick={onClose}>✕</button>
+        </div>
+        {children}
+      </div>
+    </>
+  );
+}
 
 interface NoteDetail {
   note: Note;
@@ -58,11 +81,7 @@ function VersionHistory({ noteId, isPremium, isViewer, onRestore, onClose }: {
   }
 
   return (
-    <div className="fixed inset-y-0 right-0 z-60 flex w-full max-w-[340px] flex-col border-l border-edge bg-panel shadow-2xl shadow-black/40">
-      <div className="flex items-center justify-between border-b border-edge px-4 py-3.5 font-display font-bold">
-        🕘 Historial de versiones
-        <button className={modalClose} onClick={onClose}>✕</button>
-      </div>
+    <SidePanel title="🕘 Historial de versiones" onClose={onClose}>
       <div className="flex-1 overflow-y-auto p-3">
         {!isPremium && (
           <p className="mb-2.5 rounded-lg border border-edge bg-raised px-3 py-2 text-[12px] text-dim">
@@ -90,18 +109,14 @@ function VersionHistory({ noteId, isPremium, isViewer, onRestore, onClose }: {
           </div>
         ))}
       </div>
-    </div>
+    </SidePanel>
   );
 }
 
 // Panel lateral con la guía de sintaxis markdown y atajos del editor
 function MdHelpPanel({ onClose }: { onClose: () => void }) {
   return (
-    <div className="fixed inset-y-0 right-0 z-60 flex w-full max-w-[340px] flex-col border-l border-edge bg-panel shadow-2xl shadow-black/40">
-      <div className="flex items-center justify-between border-b border-edge px-4 py-3.5 font-display font-bold">
-        📖 Guía Markdown
-        <button className={modalClose} onClick={onClose}>✕</button>
-      </div>
+    <SidePanel title="📖 Guía Markdown" onClose={onClose}>
       <div className="flex-1 overflow-y-auto p-4">
         {MD_CHEATSHEET.map((sec) => (
           <div key={sec.title} className="mb-4.5">
@@ -115,7 +130,7 @@ function MdHelpPanel({ onClose }: { onClose: () => void }) {
           </div>
         ))}
       </div>
-    </div>
+    </SidePanel>
   );
 }
 
@@ -667,19 +682,32 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
               <button className={`${toggleBtn(mode === 'split')} hidden sm:block`} onClick={() => setMode('split')}>Dividida</button>
               <button className={toggleBtn(mode === 'preview')} onClick={() => setMode('preview')}>Vista previa</button>
             </div>
-            <button className={iconBtn} onClick={exportMarkdown} title="Descargar como .md">⬇ md</button>
-            <button className={iconBtn} onClick={exportPdf} title="Descargar como PDF">⬇ PDF</button>
-            <button className={headerBtn} onClick={() => setShowHistory(true)} title="Historial de versiones">🕘 Historial</button>
-            {!isViewer && (
-              <button className={iconBtn} onClick={saveAsTemplate}
-                title={isPremium ? 'Guardar como plantilla' : 'Guardar como plantilla (Premium)'}>
-                📄{!isPremium && '🔒'}
-              </button>
-            )}
-            <button className={iconBtn} onClick={() => setShowShare(true)} title="Compartir nota">🤝</button>
-            {!isViewer && (
-              <button className={`${iconBtn} hover:border-danger hover:text-danger`} onClick={removeNote} title="Eliminar nota">🗑</button>
-            )}
+            {/* En móvil estas acciones se apilaban en varias filas y le
+                robaban altura al editor; a partir de sm van inline, antes
+                se agrupan en un menú "⋯" (mismo patrón que BoardView). */}
+            <div className="hidden items-center gap-2 sm:flex">
+              <button className={iconBtn} onClick={exportMarkdown} title="Descargar como .md">⬇ md</button>
+              <button className={iconBtn} onClick={exportPdf} title="Descargar como PDF">⬇ PDF</button>
+              <button className={headerBtn} onClick={() => setShowHistory(true)} title="Historial de versiones">🕘 Historial</button>
+              {!isViewer && (
+                <button className={iconBtn} onClick={saveAsTemplate}
+                  title={isPremium ? 'Guardar como plantilla' : 'Guardar como plantilla (Premium)'}>
+                  📄{!isPremium && '🔒'}
+                </button>
+              )}
+              <button className={iconBtn} onClick={() => setShowShare(true)} title="Compartir nota">🤝</button>
+              {!isViewer && (
+                <button className={`${iconBtn} hover:border-danger hover:text-danger`} onClick={removeNote} title="Eliminar nota">🗑</button>
+              )}
+            </div>
+            <MoreMenu className="sm:hidden" actions={[
+              { label: '⬇ Descargar .md', onClick: exportMarkdown },
+              { label: '⬇ Descargar PDF', onClick: exportPdf },
+              { label: '🕘 Historial de versiones', onClick: () => setShowHistory(true) },
+              ...(!isViewer ? [{ label: `📄 Guardar como plantilla${!isPremium ? ' 🔒' : ''}`, onClick: saveAsTemplate }] : []),
+              { label: '🤝 Compartir', onClick: () => setShowShare(true) },
+              ...(!isViewer ? [{ label: '🗑 Eliminar nota', onClick: removeNote, danger: true }] : []),
+            ]} />
           </div>
 
           {mode !== 'preview' && !isViewer && (

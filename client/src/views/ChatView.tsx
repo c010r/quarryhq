@@ -49,7 +49,7 @@ function MessageItem({ message, user, reactions, inThread, isViewer, onReact, on
 
   return (
     <div className="group relative flex gap-3 rounded-lg px-2 py-1.5 transition-colors hover:bg-panel">
-      <div className="absolute -top-3 right-2 hidden gap-0.5 rounded-lg border border-edge bg-raised p-0.5 shadow-lg shadow-black/30 group-hover:flex">
+      <div className="absolute -top-3 right-2 hidden gap-0.5 rounded-lg border border-edge bg-raised p-0.5 shadow-lg shadow-black/30 group-focus-within:flex group-hover:flex">
         {!isViewer && QUICK_EMOJIS.slice(0, 3).map((emoji) => (
           <button key={emoji} className={actionBtn} onClick={() => onReact(message.id, emoji)} title={`Reaccionar ${emoji}`}>{emoji}</button>
         ))}
@@ -355,7 +355,7 @@ export default function ChatView({ channelId, user, isPremium }: { channelId: nu
         </div>
 
         {thread && (
-          <div className="fixed inset-x-3 bottom-3 top-16 z-40 flex flex-col rounded-xl border border-edge bg-panel shadow-2xl shadow-black/50 md:static md:inset-auto md:z-auto md:w-[360px] md:shrink-0 md:rounded-none md:border-y-0 md:border-r-0 md:shadow-none">
+          <div className="fixed inset-x-3 bottom-3 top-16 z-40 flex animate-modal-in flex-col rounded-xl border border-edge bg-panel shadow-2xl shadow-black/50 md:static md:inset-auto md:z-auto md:w-[360px] md:shrink-0 md:animate-panel-in md:rounded-none md:border-y-0 md:border-r-0 md:shadow-none">
             <div className="flex items-center justify-between border-b border-edge px-4 py-3 font-display font-bold">
               💬 Hilo
               <button className={modalClose} onClick={() => setThreadId(null)}>✕</button>
