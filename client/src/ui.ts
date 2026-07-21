@@ -80,11 +80,11 @@ export const modalClose =
 // claras y oscuras a la vez no puede "vencer" un contorno sólido).
 export const emptyState = 'flex h-full min-w-0 flex-col items-center justify-center gap-2 px-4 text-center text-dim [text-shadow:1px_0_var(--color-ink),-1px_0_var(--color-ink),0_1px_var(--color-ink),0_-1px_var(--color-ink),1px_1px_var(--color-ink),-1px_-1px_var(--color-ink),1px_-1px_var(--color-ink),-1px_1px_var(--color-ink),0_2px_10px_var(--color-ink)]';
 
-export const viewTitle = 'min-w-0 font-display text-[17px] font-bold';
+export const viewTitle = 'min-w-0 font-display text-[18px] font-bold tracking-tight';
 // Chip de ícono junto al título de cada vista: identidad de color del módulo
 // (ámbar/violeta/teal) visible a primera vista. Usar con bg-*/15 text-*.
 export const titleChip = 'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[15px]';
-export const mainHeader = 'flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-edge bg-ink/85 px-3.5 py-3 backdrop-blur-sm sm:px-5 sm:py-3.5';
+export const mainHeader = 'flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-edge bg-ink/85 px-3.5 py-3 backdrop-blur-sm sm:px-5 sm:py-4';
 
 // Paleta compartida para avatares de usuario (chat y miembros de tarjeta).
 export const AVATAR_COLORS = ['#8b93f8', '#3ecfb2', '#e9a23b', '#f27d98', '#6bb2f2', '#b18cfa'];

@@ -45,5 +45,8 @@ export function applyTheme(user: User | null) {
   if (bg) {
     bgCss = bg.startsWith('https://') ? `url("${bg.replace(/["\\]/g, '')}")` : (BG_PRESETS[bg]?.css ?? 'none');
   }
-  root.setProperty('--bg-image', bgCss);
+  // Sin fondo elegido se quita la propiedad (en vez de fijar 'none') para
+  // que aplique el gradiente sutil por defecto definido en styles.css
+  if (bgCss === 'none') root.removeProperty('--bg-image');
+  else root.setProperty('--bg-image', bgCss);
 }

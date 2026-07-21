@@ -289,7 +289,10 @@ export default function ChatView({ channelId, user, isPremium }: { channelId: nu
 
       <div className="flex min-w-0 flex-1 overflow-hidden">
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          <div className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-3 py-3 sm:px-5 sm:py-4" ref={scrollRef}>
+          {/* Columna de conversación centrada: en monitores anchos los
+              mensajes no se estiran de borde a borde (ancho de lectura). */}
+          <div className="flex flex-1 flex-col overflow-y-auto px-3 py-3 sm:px-5 sm:py-4" ref={scrollRef}>
+            <div className="mx-auto flex w-full max-w-[900px] flex-1 flex-col gap-0.5">
             {messages.length === 0 && (
               <div className={`${emptyState} h-auto p-10`}>
                 <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-chat/15 text-xl text-chat">#</span>
@@ -301,9 +304,10 @@ export default function ChatView({ channelId, user, isPremium }: { channelId: nu
                 onReact={react} onOpenThread={setThreadId} onPin={pin}
                 onEdit={editMessage} onDelete={deleteMessage} />
             ))}
+            </div>
           </div>
 
-          <div className="shrink-0 px-3 pb-3 pt-3 sm:px-5 sm:pb-4.5">
+          <div className="mx-auto w-full max-w-[940px] shrink-0 px-3 pb-3 pt-3 sm:px-5 sm:pb-4.5">
             {isViewer ? (
               <p className="rounded-xl border border-edge bg-panel px-3 py-2.5 text-center text-[13px] text-dim">
                 👁 Solo lectura — no podés escribir en este canal.

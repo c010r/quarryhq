@@ -556,8 +556,13 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
   const toggleBtn = (active: boolean) =>
     `px-3 py-1.5 text-xs transition-colors ${active ? 'bg-note/10 font-semibold text-note' : 'text-dim hover:text-fg'}`;
 
+  // Columna de escritura centrada con ancho de lectura cómodo (estilo
+  // Notion/Obsidian): en pantallas anchas el texto ya no queda pegado al
+  // borde izquierdo de un lienzo vacío. El wrapper interior lleva el
+  // position:relative para que el menú "/" siga alineado al caret.
   const editorPane = (
-    <div className="relative flex min-w-0 flex-1">
+    <div className="flex min-w-0 flex-1 justify-center overflow-hidden">
+      <div className="relative flex w-full max-w-[860px]">
       <textarea ref={taRef} value={content}
         placeholder={'Escribe en markdown…\n\nEscribe "/" al inicio de una línea para el menú de comandos, o "[[" para vincular otra nota.'}
         readOnly={isViewer}
@@ -572,7 +577,7 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
         }}
         onKeyDown={onEditorKeyDown}
         onBlur={() => setTimeout(() => setMenu(null), 150)}
-        className="min-w-0 flex-1 resize-none bg-transparent px-6 py-5 font-mono text-[13.5px] leading-[1.65] outline-none" />
+        className="min-w-0 flex-1 resize-none bg-transparent px-6 py-6 font-sans text-[15px] leading-[1.7] outline-none" />
       {menu && menuCount > 0 && (
         <div className="absolute z-30 max-h-[280px] w-[290px] overflow-y-auto rounded-xl border border-edge bg-raised p-1 shadow-2xl shadow-black/40"
           style={{ top: menuPos.top, left: menuPos.left }}>
@@ -607,6 +612,7 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
           )}
         </div>
       )}
+      </div>
     </div>
   );
 
@@ -740,9 +746,11 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
           <div className="flex min-w-0 flex-1 overflow-hidden">
             {mode !== 'preview' && editorPane}
             {mode !== 'edit' && (
-              <div className={`md min-w-0 flex-1 overflow-y-auto px-6 py-5 ${mode === 'split' ? 'border-l border-edge' : ''}`}
-                onClick={onPreviewClick}
-                dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }} />
+              <div className={`min-w-0 flex-1 overflow-y-auto [scrollbar-gutter:stable] ${mode === 'split' ? 'border-l border-edge' : ''}`}
+                onClick={onPreviewClick}>
+                <div className="md mx-auto w-full max-w-[860px] px-6 py-6 text-[15px]"
+                  dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }} />
+              </div>
             )}
           </div>
 

@@ -205,7 +205,7 @@ export default function BoardView({ boardId, initialCardId, isPremium, currentUs
         {view === 'kanban' && <div className="flex min-h-full items-start gap-3 p-3 sm:gap-3.5 sm:p-4.5">
           {lists.map((list) => (
             <div key={list.id}
-              className="flex max-h-[calc(100dvh-120px)] w-[min(17.5rem,calc(100dvw-2rem))] shrink-0 flex-col rounded-xl border border-edge bg-panel md:max-h-[calc(100dvh-110px)]"
+              className="flex max-h-[calc(100dvh-120px)] w-[min(17.5rem,calc(100dvw-2rem))] shrink-0 flex-col rounded-xl border border-edge bg-panel shadow-lg shadow-black/10 md:max-h-[calc(100dvh-110px)]"
               onDragOver={(e) => !isViewer && e.preventDefault()}
               onDrop={(e) => {
                 e.preventDefault();
@@ -228,7 +228,7 @@ export default function BoardView({ boardId, initialCardId, isPremium, currentUs
                         onDragLeave={() => setDropTarget(null)}
                         onDrop={() => { if (dragging) moveCard(dragging, list.id, i); setDragging(null); setDropTarget(null); }} />
                       <div
-                        className={`rounded-lg border border-edge bg-raised px-3 py-2.5 transition-all duration-150 hover:-translate-y-0.5 hover:border-board hover:shadow-lg hover:shadow-board/10 active:translate-y-0 ${isViewer ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'} ${dragging?.id === card.id ? 'opacity-40' : ''}`}
+                        className={`rounded-lg border border-edge bg-raised px-3 py-2.5 shadow-md shadow-black/15 transition-all duration-150 hover:-translate-y-0.5 hover:border-board hover:shadow-lg hover:shadow-board/10 active:translate-y-0 ${isViewer ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'} ${dragging?.id === card.id ? 'opacity-40' : ''}`}
                         draggable={!isViewer}
                         onDragStart={() => setDragging(card)}
                         onDragEnd={() => { setDragging(null); setDropTarget(null); }}
