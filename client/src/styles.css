@@ -164,4 +164,5 @@
     cursor: pointer;
   }
   .drive-size-btn.active { background: var(--color-accent); border-color: var(--color-accent); color: #fff; }
+  .drive-size-sep { width: 1px; background: var(--color-edge); margin: 2px 2px; }
 }

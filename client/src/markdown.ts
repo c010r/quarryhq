@@ -39,26 +39,35 @@ const DRIVE_EMBED_KINDS = ['image', 'video', 'pdf'];
 // ese título no sobrevive al paso por escapeHtml (convierte " en &quot;
 // antes de que marked parsee la sintaxis de título). El alt es texto
 // plano, así que un prefijo con ":" es seguro.
-// Formato: ![kind:N:nombre](url), N de 1 a 4 = 25/50/75/100% del ancho.
-// Un dígito discreto en vez de arrastrar y guardar píxeles exactos: más
+// Formato: ![kind:N:A:nombre](url) — N de 1 a 4 = 25/50/75/100% del ancho,
+// A = l/c/r (izquierda/centro/derecha). Ambos son opcionales y con default
+// (4, l) para no romper embeds insertados antes de agregar la alineación.
+// Dígitos discretos en vez de arrastrar y guardar píxeles exactos: más
 // simple de leer/escribir a mano y sin los líos de un resize nativo sobre
 // un <iframe> de otro origen (scrollbar tapando el handle, el documento de
 // adentro quedándose con el mousedown, etc.)
-const DRIVE_SIZE_RE = /^([1-4]):/;
+const DRIVE_META_RE = /^(?:([1-4]):)?(?:([lcr]):)?/;
 const DRIVE_SIZE_STEPS = [25, 50, 75, 100];
+const DRIVE_ALIGN_MARGIN: Record<string, string> = {
+  l: 'margin-right:auto', c: 'margin-left:auto;margin-right:auto', r: 'margin-left:auto',
+};
+const DRIVE_ALIGN_LABEL: Record<string, string> = { l: '⬅', c: '⬌', r: '➡' };
 
 renderer.image = ({ href, text }: Tokens.Image) => {
   const previewMatch = DRIVE_PREVIEW_RE.exec(href);
   const kind = DRIVE_EMBED_KINDS.find((k) => text.startsWith(`${k}:`));
   if (previewMatch && kind) {
-    let label = text.slice(kind.length + 1);
-    const sizeMatch = DRIVE_SIZE_RE.exec(label);
-    const step = sizeMatch ? Number(sizeMatch[1]) : 4;
-    if (sizeMatch) label = label.slice(sizeMatch[0].length);
+    const rest = text.slice(kind.length + 1);
+    const metaMatch = DRIVE_META_RE.exec(rest)!;
+    const step = metaMatch[1] ? Number(metaMatch[1]) : 4;
+    const align = metaMatch[2] ?? 'l';
+    const label = rest.slice(metaMatch[0].length);
     const id = previewMatch[1];
-    const controls = [1, 2, 3, 4].map((n) =>
+    const sizeControls = [1, 2, 3, 4].map((n) =>
       `<button type="button" data-drive-size="${n}" class="drive-size-btn${n === step ? ' active' : ''}">${DRIVE_SIZE_STEPS[n - 1]}%</button>`).join('');
-    return `<div data-drive-id="${id}" data-drive-kind="${kind}" class="drive-embed drive-frame" style="width:${DRIVE_SIZE_STEPS[step - 1]}%"><iframe src="https://drive.google.com/file/d/${id}/preview" title="${escapeHtml(label)}" class="drive-frame-inner" loading="lazy" sandbox="allow-scripts allow-same-origin allow-presentation allow-popups" allow="autoplay"></iframe><div class="drive-size-controls">${controls}</div></div>`;
+    const alignControls = ['l', 'c', 'r'].map((a) =>
+      `<button type="button" data-drive-align="${a}" class="drive-size-btn${a === align ? ' active' : ''}">${DRIVE_ALIGN_LABEL[a]}</button>`).join('');
+    return `<div data-drive-id="${id}" data-drive-kind="${kind}" class="drive-embed drive-frame" style="width:${DRIVE_SIZE_STEPS[step - 1]}%;${DRIVE_ALIGN_MARGIN[align]}"><iframe src="https://drive.google.com/file/d/${id}/preview" title="${escapeHtml(label)}" class="drive-frame-inner" loading="lazy" sandbox="allow-scripts allow-same-origin allow-presentation allow-popups" allow="autoplay"></iframe><div class="drive-size-controls">${sizeControls}<span class="drive-size-sep"></span>${alignControls}</div></div>`;
   }
   return escapeHtml(text);
 };

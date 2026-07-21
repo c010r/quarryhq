@@ -266,24 +266,36 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
     setDetail(null);
   }
 
-  // Botones de tamaño (25/50/75/100%) sobre un embed de Drive: reescriben el
-  // dígito guardado en el texto alt del enlace (![kind:N:nombre](url)) — no
-  // en el título markdown estándar, que no sobrevive al escapeHtml previo
-  // (ver markdown.ts).
-  function setDriveSize(id: string, kind: string, step: string) {
+  // Botones de tamaño (25/50/75/100%) y alineación (izq/centro/der) sobre un
+  // embed de Drive: reescriben el prefijo guardado en el texto alt del
+  // enlace (![kind:N:A:nombre](url)) — no en el título markdown estándar,
+  // que no sobrevive al escapeHtml previo (ver markdown.ts). Al tocar
+  // cualquiera de los dos controles se preserva el otro valor ya guardado.
+  function setDriveMeta(id: string, kind: string, patch: { size?: string; align?: string }) {
     if (isViewer) return;
-    const re = new RegExp(`!\\[${kind}:(?:[1-4]:)?([^\\]]*)\\]\\(https://drive\\.google\\.com/file/d/${id}/preview\\)`);
-    const next = content.replace(re, `![${kind}:${step}:$1](https://drive.google.com/file/d/${id}/preview)`);
+    const re = new RegExp(`!\\[${kind}:(?:([1-4]):)?(?:([lcr]):)?([^\\]]*)\\]\\(https://drive\\.google\\.com/file/d/${id}/preview\\)`);
+    const m = re.exec(content);
+    if (!m) return;
+    const size = patch.size ?? m[1] ?? '4';
+    const align = patch.align ?? m[2] ?? 'l';
+    const next = content.slice(0, m.index) +
+      `![${kind}:${size}:${align}:${m[3]}](https://drive.google.com/file/d/${id}/preview)` +
+      content.slice(m.index + m[0].length);
     if (next !== content) { setContent(next); scheduleSave(title, next); }
   }
 
-  // Interceptar clics en wiki-links y en los botones de tamaño de Drive
-  // dentro de la vista previa
+  // Interceptar clics en wiki-links y en los controles de tamaño/alineación
+  // de Drive dentro de la vista previa
   function onPreviewClick(e: React.MouseEvent) {
-    const sizeBtn = (e.target as HTMLElement).closest<HTMLElement>('[data-drive-size]');
-    if (sizeBtn) {
-      const wrap = sizeBtn.closest<HTMLElement>('.drive-embed[data-drive-id]');
-      if (wrap) setDriveSize(wrap.dataset.driveId!, wrap.dataset.driveKind!, sizeBtn.dataset.driveSize!);
+    const target = e.target as HTMLElement;
+    const sizeBtn = target.closest<HTMLElement>('[data-drive-size]');
+    const alignBtn = target.closest<HTMLElement>('[data-drive-align]');
+    if (sizeBtn || alignBtn) {
+      const wrap = (sizeBtn ?? alignBtn)!.closest<HTMLElement>('.drive-embed[data-drive-id]');
+      if (wrap) {
+        setDriveMeta(wrap.dataset.driveId!, wrap.dataset.driveKind!,
+          sizeBtn ? { size: sizeBtn.dataset.driveSize! } : { align: alignBtn!.dataset.driveAlign! });
+      }
       return;
     }
     const anchor = (e.target as HTMLElement).closest('a');
