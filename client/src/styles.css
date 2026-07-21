@@ -133,5 +133,14 @@
   .md blockquote { border-left: 3px solid var(--color-note); padding-left: 12px; color: var(--color-dim); margin-bottom: 0.7em; }
   .md strong { font-weight: 600; }
   .drive-embed { display: block; margin-bottom: 0.7em; border-radius: 8px; }
-  .drive-frame { width: 100%; aspect-ratio: 16 / 9; border: 1px solid var(--color-edge); }
+  .drive-frame {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    border: 1px solid var(--color-edge);
+    resize: both;
+    overflow: hidden;
+    min-width: 200px;
+    min-height: 120px;
+    max-width: 100%;
+  }
 }

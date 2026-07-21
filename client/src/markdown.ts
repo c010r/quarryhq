@@ -35,13 +35,23 @@ renderer.link = ({ href, title, tokens }: Tokens.Link) => {
 // directo — el iframe del visor de Drive no tiene ese problema.
 const DRIVE_PREVIEW_RE = /^https:\/\/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)\/preview$/;
 const DRIVE_EMBED_KINDS = ['image', 'video', 'pdf'];
+// El tamaño (si el usuario redimensionó el embed) va en el texto alt, no en
+// el título markdown estándar ("...") — ese título no sobrevive al paso por
+// escapeHtml (convierte " en &quot; antes de que marked parsee la sintaxis
+// de título). El alt es texto plano, así que un prefijo con ":" es seguro.
+// Formato: ![kind:anchoxalto:nombre](url). Ver NotesView.tsx, que reescribe
+// ese prefijo al soltar el mouse tras un resize.
+const DRIVE_SIZE_RE = /^(\d{2,4})x(\d{2,4}):/;
 
 renderer.image = ({ href, text }: Tokens.Image) => {
   const previewMatch = DRIVE_PREVIEW_RE.exec(href);
   const kind = DRIVE_EMBED_KINDS.find((k) => text.startsWith(`${k}:`));
   if (previewMatch && kind) {
-    const label = text.slice(kind.length + 1);
-    return `<iframe src="https://drive.google.com/file/d/${previewMatch[1]}/preview" title="${escapeHtml(label)}" class="drive-embed drive-frame" loading="lazy" sandbox="allow-scripts allow-same-origin allow-presentation allow-popups" allow="autoplay"></iframe>`;
+    let label = text.slice(kind.length + 1);
+    const sizeMatch = DRIVE_SIZE_RE.exec(label);
+    const style = sizeMatch ? ` style="width:${sizeMatch[1]}px;height:${sizeMatch[2]}px"` : '';
+    if (sizeMatch) label = label.slice(sizeMatch[0].length);
+    return `<iframe src="https://drive.google.com/file/d/${previewMatch[1]}/preview" title="${escapeHtml(label)}" data-drive-id="${previewMatch[1]}" data-drive-kind="${kind}" class="drive-embed drive-frame" loading="lazy" sandbox="allow-scripts allow-same-origin allow-presentation allow-popups" allow="autoplay"${style}></iframe>`;
   }
   return escapeHtml(text);
 };

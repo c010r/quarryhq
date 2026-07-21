@@ -146,6 +146,7 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
 
   // Menú flotante del editor: comandos "/" y autocompletado de "[["
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const previewRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<EditorMenu | null>(null);
   const [menuIndex, setMenuIndex] = useState(0);
   const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
@@ -264,6 +265,36 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
     onChanged();
     navigate('/notes');
     setDetail(null);
+  }
+
+  // El usuario redimensiona un embed de Drive arrastrando el handle nativo
+  // (CSS resize: both) en su esquina inferior derecha. Detectamos el
+  // mousedown ahí para no confundirlo con un click cualquiera dentro de la
+  // vista previa (que también dispara mouseup) — si no, cualquier clic
+  // "congelaría" el tamaño responsive del embed al ancho de pantalla del
+  // momento. Al soltar, graba el tamaño en el texto alt del enlace
+  // (![kind:anchoxalto:nombre](url)) para que persista — no en el título
+  // markdown estándar, que no sobrevive al escapeHtml previo (ver markdown.ts).
+  const resizingDriveId = useRef<string | null>(null);
+  function onPreviewMouseDown(e: React.MouseEvent) {
+    const el = (e.target as HTMLElement).closest('.drive-frame') as HTMLElement | null;
+    if (!el) { resizingDriveId.current = null; return; }
+    const rect = el.getBoundingClientRect();
+    const nearResizeHandle = e.clientX > rect.right - 16 && e.clientY > rect.bottom - 16;
+    resizingDriveId.current = nearResizeHandle ? (el.dataset.driveId ?? null) : null;
+  }
+  function onPreviewMouseUp() {
+    const id = resizingDriveId.current;
+    resizingDriveId.current = null;
+    if (isViewer || !id || !previewRef.current) return;
+    const el = previewRef.current.querySelector<HTMLElement>(`.drive-embed[data-drive-id="${id}"]`);
+    if (!el) return;
+    const kind = el.dataset.driveKind!;
+    const w = Math.round(el.getBoundingClientRect().width);
+    const h = Math.round(el.getBoundingClientRect().height);
+    const re = new RegExp(`!\\[${kind}:(?:\\d+x\\d+:)?([^\\]]*)\\]\\(https://drive\\.google\\.com/file/d/${id}/preview\\)`);
+    const next = content.replace(re, `![${kind}:${w}x${h}:$1](https://drive.google.com/file/d/${id}/preview)`);
+    if (next !== content) { setContent(next); scheduleSave(title, next); }
   }
 
   // Interceptar clics en wiki-links dentro de la vista previa
@@ -598,8 +629,10 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
           <div className="flex min-w-0 flex-1 overflow-hidden">
             {mode !== 'preview' && editorPane}
             {mode !== 'edit' && (
-              <div className={`md min-w-0 flex-1 overflow-y-auto px-6 py-5 ${mode === 'split' ? 'border-l border-edge' : ''}`}
+              <div ref={previewRef} className={`md min-w-0 flex-1 overflow-y-auto px-6 py-5 ${mode === 'split' ? 'border-l border-edge' : ''}`}
                 onClick={onPreviewClick}
+                onMouseDown={onPreviewMouseDown}
+                onMouseUp={onPreviewMouseUp}
                 dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }} />
             )}
           </div>
