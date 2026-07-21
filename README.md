@@ -64,6 +64,7 @@ canjear un solo código.
 - **Backend:** Node.js + Express + WebSockets (`ws`)
 - **Base de datos:** **PostgreSQL 16** (driver `pg`, pool de conexiones). El esquema se crea solo al arrancar; los timestamps se guardan como texto UTC para compatibilidad de formato con el cliente.
 - **Auth:** sesiones con token + contraseñas con `scrypt`, y **Google Sign-In** opcional (define `GOOGLE_CLIENT_ID` con un client id OAuth de Google Cloud y aparece el botón "Continuar con Google"; el servidor verifica el ID token contra `tokeninfo`)
+- **Google Drive (opcional):** el editor de notas puede insertar imágenes, videos y PDFs desde Drive con el selector de Google (Picker). Define además `GOOGLE_API_KEY` (API key restringida a la Picker API y al dominio de la app en Google Cloud Console) para que aparezca el botón "Insertar desde Google Drive" en la barra del editor. El acceso usa el scope mínimo `drive.file` (solo ve lo que el usuario elige) y el token vive solo en el navegador — el servidor no guarda ninguna credencial de Drive.
 
 ## Desarrollo
 
@@ -74,6 +75,7 @@ Las variables se pueden definir en un `.env` en la raíz (ignorado por git), p. 
 
 ```
 GOOGLE_CLIENT_ID=xxxxx.apps.googleusercontent.com
+GOOGLE_API_KEY=xxxxx           # opcional: habilita "Insertar desde Google Drive"
 ```
 
 ```bash

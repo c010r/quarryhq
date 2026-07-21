@@ -15,7 +15,7 @@ app.use((_req, res, next) => {
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   res.setHeader('Content-Security-Policy',
-    "default-src 'self'; script-src 'self' https://accounts.google.com/gsi/client; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://oauth2.googleapis.com; frame-src https://accounts.google.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
+    "default-src 'self'; script-src 'self' https://accounts.google.com/gsi/client https://apis.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://oauth2.googleapis.com; frame-src https://accounts.google.com https://docs.google.com https://drive.google.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
   if (process.env.NODE_ENV === 'production') {
     res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   }
@@ -523,10 +523,18 @@ app.post('/api/auth/reset', h(async (req, res) => {
 
 // ---------- Google Sign-In ----------
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID ?? '';
+// API key restringida (HTTP referrer + Picker API) en Google Cloud Console;
+// solo habilita el selector de archivos, nunca se usa para autenticar.
+const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY ?? '';
 
-// El cliente pregunta si el botón de Google debe mostrarse y con qué client id
+// El cliente pregunta si el botón de Google y el selector de Drive deben
+// mostrarse, y con qué credenciales (ninguna es secreta: client id y API key
+// son públicos por diseño, restringidos por origen en Google Cloud Console).
 app.get('/api/auth/config', (_req, res) => {
-  res.json({ googleClientId: GOOGLE_CLIENT_ID || null });
+  res.json({
+    googleClientId: GOOGLE_CLIENT_ID || null,
+    googleApiKey: GOOGLE_API_KEY || null,
+  });
 });
 
 app.post('/api/auth/google', h(async (req, res) => {

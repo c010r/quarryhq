@@ -3,6 +3,7 @@ import { get, post, patch, del, notifyPlanBlock, onWsEvent, sendWs } from '../ap
 import type { Backlink, Note, NoteMeta, NoteVersion, TagCount, Template } from '../types';
 import { renderMarkdown } from '../markdown';
 import { MD_COMMANDS, MD_CHEATSHEET, detectMenu, getCaretCoords, type EditorMenu, type MdCommand } from '../editor';
+import { pickDriveFile, driveFileSnippet } from '../googleDrive';
 import { navigate } from '../App';
 import { chip, emptyState, headerBtn, iconBtn, modalClose, sectionTitle, sideHeading, sideIcon, sideItem, sideLabel } from '../ui';
 import { alertDialog, confirmDialog, promptDialog } from '../dialog';
@@ -387,6 +388,20 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
     applyEdit(next, caret + (cursorIdx >= 0 ? cursorIdx + (needsBreak ? 1 : 0) : clean.length));
   }
 
+  const [drivePicking, setDrivePicking] = useState(false);
+  async function insertFromDrive() {
+    if (drivePicking) return;
+    setDrivePicking(true);
+    try {
+      const file = await pickDriveFile();
+      if (file) insertBlockAtCaret(driveFileSnippet(file) + '\n$0');
+    } catch (err: any) {
+      alertDialog(err.message ?? 'No se pudo abrir el selector de Google Drive');
+    } finally {
+      setDrivePicking(false);
+    }
+  }
+
   function onEditorKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (menu && menuCount > 0) {
       if (e.key === 'ArrowDown') { e.preventDefault(); setMenuIndex((i) => (i + 1) % menuCount); return; }
@@ -573,6 +588,8 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
               <button className={mdBtn} title="Enlace web" onClick={() => wrapSelection('[', '](https://)', 'texto')}>🔗</button>
               <button className={mdBtn} title="Tabla" onClick={() => insertBlockAtCaret('| Columna 1 | Columna 2 |\n| --- | --- |\n| $0 |  |')}>▦</button>
               <button className={mdBtn} title="Divisor" onClick={() => insertBlockAtCaret('---\n$0')}>—</button>
+              <span className={toolbarSep} />
+              <button className={mdBtn} title="Insertar desde Google Drive" onClick={insertFromDrive} disabled={drivePicking}>🗂️</button>
               <span className="ml-auto hidden pr-1 text-[11.5px] text-dim sm:inline">{words} palabras · {content.length} caracteres</span>
               <button className={mdBtn} title="Guía Markdown" onClick={() => setShowHelp(true)}>?</button>
             </div>

@@ -24,7 +24,27 @@ renderer.link = ({ href, title, tokens }: Tokens.Link) => {
   const external = /^(https?:)?\/\//i.test(href) ? ' target="_blank" rel="noopener noreferrer"' : '';
   return `<a href="${safeHref}"${safeTitle}${external}>${text}</a>`;
 };
-renderer.image = ({ text }: Tokens.Image) => escapeHtml(text);
+// Las imágenes normales siguen deshabilitadas (no se renderiza contenido
+// remoto arbitrario), salvo un caso: los embeds insertados por el selector
+// de Google Drive (ver googleDrive.ts), reconocidos por URL exacta y con el
+// id de archivo validado — nunca se interpola nada sin chequear.
+// Los tres tipos (imagen/video/PDF) usan el visor embebido de Drive
+// (iframe), no un <img> directo: el hack "uc?export=view" depende de la
+// cookie de sesión de Google, que los navegadores bloquean en contexto de
+// terceros (subrecurso cross-site) aunque la misma URL funcione navegando
+// directo — el iframe del visor de Drive no tiene ese problema.
+const DRIVE_PREVIEW_RE = /^https:\/\/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)\/preview$/;
+const DRIVE_EMBED_KINDS = ['image', 'video', 'pdf'];
+
+renderer.image = ({ href, text }: Tokens.Image) => {
+  const previewMatch = DRIVE_PREVIEW_RE.exec(href);
+  const kind = DRIVE_EMBED_KINDS.find((k) => text.startsWith(`${k}:`));
+  if (previewMatch && kind) {
+    const label = text.slice(kind.length + 1);
+    return `<iframe src="https://drive.google.com/file/d/${previewMatch[1]}/preview" title="${escapeHtml(label)}" class="drive-embed drive-frame" loading="lazy" sandbox="allow-scripts allow-same-origin allow-presentation allow-popups" allow="autoplay"></iframe>`;
+  }
+  return escapeHtml(text);
+};
 
 marked.setOptions({ breaks: true, gfm: true, renderer });
 
