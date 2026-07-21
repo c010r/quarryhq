@@ -3,7 +3,7 @@ import { get, post, patch, del, onWsEvent, notifyPlanBlock, sendWs } from '../ap
 import type { Channel, Message, Reaction, ScheduledMessage, User } from '../types';
 import { renderInlineMarkdown } from '../markdown';
 import { navigate } from '../App';
-import { avatarColor, btnSmall, headerBtn, emptyState, mainHeader, modalClose, viewTitle } from '../ui';
+import { avatarColor, btnSmall, headerBtn, emptyState, mainHeader, modalClose, titleChip, viewTitle } from '../ui';
 import { alertDialog, confirmDialog } from '../dialog';
 import ShareModal from './ShareModal';
 import PresenceAvatars, { type PresenceViewer } from './PresenceAvatars';
@@ -250,7 +250,8 @@ export default function ChatView({ channelId, user, isPremium }: { channelId: nu
   return (
     <div className="flex h-full min-w-0 flex-col">
       <div className={mainHeader}>
-        <h2 className={viewTitle + " truncate"}><span className="text-chat">#</span> {channel.name}</h2>
+        <span className={`${titleChip} bg-chat/15 text-chat`}>#</span>
+        <h2 className={viewTitle + " truncate"}>{channel.name}</h2>
         <span className="text-[13px] text-dim">{messages.length} mensajes</span>
         {channel.shared && <span className="text-[12px] text-dim">🤝 compartido por @{channel.owner_username}</span>}
         <PresenceAvatars viewers={viewers} currentUserId={user.id} />
@@ -291,6 +292,7 @@ export default function ChatView({ channelId, user, isPremium }: { channelId: nu
           <div className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-3 py-3 sm:px-5 sm:py-4" ref={scrollRef}>
             {messages.length === 0 && (
               <div className={`${emptyState} h-auto p-10`}>
+                <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-chat/15 text-xl text-chat">#</span>
                 <p>Todavía no hay mensajes en #{channel.name}. ¡Escribe el primero!</p>
               </div>
             )}

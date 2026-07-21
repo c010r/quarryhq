@@ -10,7 +10,7 @@ import ShareModal from './ShareModal';
 import ActivityModal from './ActivityModal';
 import PresenceAvatars, { type PresenceViewer } from './PresenceAvatars';
 import MoreMenu from './MoreMenu';
-import { avatarColor, btnGhost, btnSmall, emptyState, headerBtn, mainHeader, viewTitle } from '../ui';
+import { avatarColor, btnGhost, btnSmall, emptyState, headerBtn, mainHeader, titleChip, viewTitle } from '../ui';
 import { confirmDialog } from '../dialog';
 
 function CardBadges({ card }: { card: Card }) {
@@ -160,7 +160,8 @@ export default function BoardView({ boardId, initialCardId, isPremium, currentUs
   return (
     <>
       <div className={mainHeader}>
-        <h2 className={viewTitle + " truncate"}><span className="text-board">▦</span> {board.name}</h2>
+        <span className={`${titleChip} bg-board/15 text-board`}>▦</span>
+        <h2 className={viewTitle + " truncate"}>{board.name}</h2>
         <span className="text-[13px] text-dim">{lists.reduce((n, l) => n + l.cards.length, 0)} tarjetas</span>
         {board.shared && <span className="text-[12px] text-dim">🤝 compartido por @{board.owner_username}</span>}
         <PresenceAvatars viewers={viewers} currentUserId={currentUserId} />
@@ -211,9 +212,10 @@ export default function BoardView({ boardId, initialCardId, isPremium, currentUs
                 if (!isViewer && dragging && dropTarget === null) moveCard(dragging, list.id, list.cards.length);
                 setDragging(null); setDropTarget(null);
               }}>
-              <div className="flex items-center justify-between px-3.5 py-3 text-[13.5px] font-semibold">
-                <span>{list.name} <span className="font-normal text-dim">· {list.cards.length}</span></span>
-                {!isViewer && <button className={btnGhost} onClick={() => removeList(list)} title="Eliminar lista">✕</button>}
+              <div className="flex items-center gap-2 px-3.5 py-3 text-[13.5px] font-semibold">
+                <span className="truncate">{list.name}</span>
+                <span className="rounded-full bg-ink px-2 py-0.5 text-[11px] font-normal text-dim">{list.cards.length}</span>
+                {!isViewer && <button className={`${btnGhost} ml-auto`} onClick={() => removeList(list)} title="Eliminar lista">✕</button>}
               </div>
               <div className="flex min-h-8 flex-col gap-2 overflow-y-auto px-2.5 pb-2.5 pt-1">
                 {list.cards.map((card, i) => {
@@ -232,8 +234,8 @@ export default function BoardView({ boardId, initialCardId, isPremium, currentUs
                         onDragEnd={() => { setDragging(null); setDropTarget(null); }}
                         onClick={() => setOpenCardId(card.id)}>
                         {labels.length > 0 && (
-                          <div className="mb-1.5 flex gap-1">
-                            {labels.map((l) => <span key={l} className="h-1.5 w-7 rounded-full" style={{ background: LABEL_COLORS[l] ?? '#666' }} />)}
+                          <div className="mb-2 flex flex-wrap gap-1">
+                            {labels.map((l) => <span key={l} className="h-2 w-8 rounded-full" style={{ background: LABEL_COLORS[l] ?? '#666' }} />)}
                           </div>
                         )}
                         <div className={card.completed ? 'text-dim line-through' : ''}>
@@ -253,7 +255,7 @@ export default function BoardView({ boardId, initialCardId, isPremium, currentUs
               {!isViewer && (addingCardTo === list.id ? (
                 <AddForm placeholder="Título de la tarjeta…" onSubmit={(t) => addCard(list.id, t)} onCancel={() => setAddingCardTo(null)} />
               ) : (
-                <button className="px-3.5 pb-3 pt-2 text-left text-[13px] text-dim transition-colors hover:text-fg"
+                <button className="mx-2.5 mb-2.5 rounded-lg border border-dashed border-transparent px-3 py-2 text-left text-[13px] text-dim transition-colors hover:border-edge hover:bg-ink/40 hover:text-fg"
                   onClick={() => setAddingCardTo(list.id)}>+ Añadir tarjeta</button>
               ))}
             </div>

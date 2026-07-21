@@ -6,7 +6,7 @@ import { MD_COMMANDS, MD_CHEATSHEET, detectMenu, getCaretCoords, type EditorMenu
 import { pickDriveFile, driveFileSnippet } from '../googleDrive';
 import { buildZip } from '../zip';
 import { navigate } from '../App';
-import { chip, emptyState, headerBtn, iconBtn, modalClose, sectionTitle, sideHeading, sideIcon, sideItem, sideLabel } from '../ui';
+import { chip, emptyState, headerBtn, iconBtn, modalClose, sectionTitle, sideHeading, sideIcon, sideItem, sideLabel, titleChip } from '../ui';
 import { alertDialog, confirmDialog, promptDialog } from '../dialog';
 import ShareModal from './ShareModal';
 import PresenceAvatars, { type PresenceViewer } from './PresenceAvatars';
@@ -663,6 +663,7 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
       {detail ? (
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <div className="flex shrink-0 flex-wrap items-center gap-x-2.5 gap-y-2 border-b border-edge px-5 py-3">
+            <span className={`${titleChip} bg-note/15 text-note`}>◆</span>
             <input value={title}
               onChange={(e) => { setTitle(e.target.value); scheduleSave(e.target.value, content); }}
               readOnly={isViewer}

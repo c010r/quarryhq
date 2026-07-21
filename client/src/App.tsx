@@ -12,7 +12,7 @@ import InvitesModal from './views/InvitesModal';
 import NotificationsModal from './views/NotificationsModal';
 import ConnectionsModal from './views/ConnectionsModal';
 import AdminView from './views/AdminView';
-import { btnPrimary, btnGhost, emptyState, headerBtn, inputBase, sideHeading, sideIcon, sideItem, sideLabel } from './ui';
+import { avatarColor, btnPrimary, btnGhost, emptyState, headerBtn, inputBase, sideHeading, sideIcon, sideItem, sideLabel } from './ui';
 import { alertDialog, promptDialog } from './dialog';
 import { applyTheme } from './theme';
 import { type ColorMode, getEffectiveMode, setColorMode } from './colorMode';
@@ -444,7 +444,17 @@ function Workspace({ user, onLogout, onUserChanged }: {
   const [section, param] = route;
 
   const newButton = (onClick: () => void, title: string) => (
-    <button onClick={onClick} title={title} className="px-1 text-[15px] leading-none text-dim transition-colors hover:text-fg">+</button>
+    <button onClick={onClick} title={title}
+      className="flex h-5 w-5 items-center justify-center rounded-md text-[14px] leading-none text-dim transition-colors hover:bg-hover hover:text-fg">+</button>
+  );
+
+  // Encabezado de sección del sidebar: punto del color del módulo + contador
+  const sectionLabel = (tone: string, label: string, count: number) => (
+    <span className="flex items-center gap-1.5">
+      <span className={`h-1.5 w-1.5 rounded-full ${tone}`} />
+      {label}
+      {count > 0 && <span className="font-normal opacity-60">{count}</span>}
+    </span>
   );
 
   return (
@@ -499,7 +509,7 @@ function Workspace({ user, onLogout, onUserChanged }: {
         )}
 
         <div className="px-3 py-1.5">
-          <div className={sideHeading}>Tableros {newButton(createBoard, 'Nuevo tablero')}</div>
+          <div className={sideHeading}>{sectionLabel('bg-board', 'Tableros', boards.length)} {newButton(createBoard, 'Nuevo tablero')}</div>
           {boards.map((b) => (
             <button key={b.id} className={sideItem(section === 'board' && Number(param) === b.id, 'board')}
               onClick={() => navigate(`/board/${b.id}`)}>
@@ -510,7 +520,7 @@ function Workspace({ user, onLogout, onUserChanged }: {
         </div>
 
         <div className="px-3 py-1.5">
-          <div className={sideHeading}>Notas {newButton(createNote, 'Nueva nota')}</div>
+          <div className={sideHeading}>{sectionLabel('bg-note', 'Notas', notes.length)} {newButton(createNote, 'Nueva nota')}</div>
           {notes.slice(0, 8).map((n) => (
             <button key={n.id} className={sideItem(section === 'notes' && Number(param) === n.id, 'note')}
               onClick={() => navigate(`/notes/${n.id}`)}>
@@ -526,7 +536,7 @@ function Workspace({ user, onLogout, onUserChanged }: {
         </div>
 
         <div className="px-3 py-1.5">
-          <div className={sideHeading}>Canales {newButton(createChannel, 'Nuevo canal')}</div>
+          <div className={sideHeading}>{sectionLabel('bg-chat', 'Canales', channels.length)} {newButton(createChannel, 'Nuevo canal')}</div>
           {channels.map((c) => (
             <button key={c.id} className={sideItem(section === 'chat' && Number(param) === c.id, 'chat')}
               onClick={() => navigate(`/chat/${c.id}`)}>
@@ -575,7 +585,12 @@ function Workspace({ user, onLogout, onUserChanged }: {
           </div>
           <div className="flex items-center justify-between gap-2 border-t border-edge p-3 text-[13px] text-dim">
             <span className="flex min-w-0 items-center gap-2">
-              {user.picture && <img src={user.picture} alt="" referrerPolicy="no-referrer" className="h-5 w-5 shrink-0 rounded-full" />}
+              {user.picture
+                ? <img src={user.picture} alt="" referrerPolicy="no-referrer" className="h-6 w-6 shrink-0 rounded-full" />
+                : <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-ink"
+                    style={{ background: avatarColor(user.username) }}>
+                    {(user.name ?? user.username).slice(0, 1).toUpperCase()}
+                  </span>}
               <span className={sideLabel} title={`@${user.username}`}>{user.name ?? `@${user.username}`}</span>
             </span>
             <button className={btnGhost} onClick={logout}>Salir</button>
@@ -593,9 +608,37 @@ function Workspace({ user, onLogout, onUserChanged }: {
         {section === 'chat' && param && <ChatView channelId={Number(param)} user={user} isPremium={isPremium} />}
         {section === 'graph' && <GraphView />}
         {!section && (
-          <div className={emptyState}>
-            <h3 className="font-display text-base font-bold text-fg">Bienvenido a QuarryHQ</h3>
-            <p>Crea un tablero, una nota o un canal desde la barra lateral.</p>
+          <div className="flex h-full min-w-0 flex-col items-center justify-center gap-8 overflow-y-auto px-5 py-10">
+            <div className="flex flex-col items-center gap-2.5 text-center [text-shadow:0_1px_10px_var(--color-ink)]">
+              <LinkMark />
+              <h1 className="font-display text-[26px] font-extrabold tracking-tight">Bienvenido a QuarryHQ</h1>
+              <p className="max-w-md text-[13.5px] leading-relaxed text-dim">
+                Un solo espacio donde tus tableros, notas y conversaciones se enlazan entre sí. Empieza por donde quieras:
+              </p>
+            </div>
+            <div className="grid w-full max-w-2xl grid-cols-1 gap-3.5 sm:grid-cols-3">
+              <button onClick={createBoard}
+                className="group flex flex-col items-start gap-2.5 rounded-2xl border border-edge bg-panel p-5 text-left transition-all duration-150 hover:-translate-y-1 hover:border-board hover:shadow-xl hover:shadow-board/10 active:translate-y-0">
+                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-board/15 text-lg text-board transition-transform group-hover:scale-110">▦</span>
+                <span className="font-display text-[15px] font-bold">Crear un tablero</span>
+                <span className="text-[12.5px] leading-relaxed text-dim">Organiza tareas en listas y tarjetas estilo kanban.</span>
+              </button>
+              <button onClick={createNote}
+                className="group flex flex-col items-start gap-2.5 rounded-2xl border border-edge bg-panel p-5 text-left transition-all duration-150 hover:-translate-y-1 hover:border-note hover:shadow-xl hover:shadow-note/10 active:translate-y-0">
+                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-note/15 text-lg text-note transition-transform group-hover:scale-110">◆</span>
+                <span className="font-display text-[15px] font-bold">Escribir una nota</span>
+                <span className="text-[12.5px] leading-relaxed text-dim">Markdown con [[enlaces]] entre notas, estilo Obsidian.</span>
+              </button>
+              <button onClick={createChannel}
+                className="group flex flex-col items-start gap-2.5 rounded-2xl border border-edge bg-panel p-5 text-left transition-all duration-150 hover:-translate-y-1 hover:border-chat hover:shadow-xl hover:shadow-chat/10 active:translate-y-0">
+                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-chat/15 text-lg text-chat transition-transform group-hover:scale-110">#</span>
+                <span className="font-display text-[15px] font-bold">Abrir un canal</span>
+                <span className="text-[12.5px] leading-relaxed text-dim">Conversa en tiempo real con hilos y reacciones.</span>
+              </button>
+            </div>
+            <p className="text-[12px] text-dim [text-shadow:0_1px_10px_var(--color-ink)]">
+              Consejo: <kbd className="rounded border border-edge bg-raised px-1.5 py-px font-sans text-[11px]">Ctrl K</kbd> busca en todo tu espacio.
+            </p>
           </div>
         )}
       </main>
