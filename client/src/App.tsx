@@ -519,20 +519,16 @@ function Workspace({ user, onLogout, onUserChanged }: {
           ))}
         </div>
 
-        <div className="px-3 py-1.5">
-          <div className={sideHeading}>{sectionLabel('bg-note', 'Notas', notes.length)} {newButton(createNote, 'Nueva nota')}</div>
-          {notes.slice(0, 8).map((n) => (
-            <button key={n.id} className={sideItem(section === 'notes' && Number(param) === n.id, 'note')}
-              onClick={() => navigate(`/notes/${n.id}`)}>
-              <span className={`${sideIcon} text-note`}>◆</span><span className={sideLabel}>{n.title}</span>
-              {n.shared && <span className="shrink-0 text-[11px] text-dim" title={`Compartida por @${n.owner_username}`}>🤝</span>}
-            </button>
-          ))}
-          {notes.length > 8 && (
-            <button className={sideItem(false)} onClick={() => setPaletteOpen(true)}>
-              <span className={sideIcon}>…</span><span className={sideLabel}>{notes.length - 8} notas más</span>
-            </button>
-          )}
+        {/* Enlace único a la vista de notas (no una lista): la propia
+            NotesView ya tiene su columna con buscador, etiquetas y acciones,
+            así que repetir aquí las notas era una duplicación visible. */}
+        <div className="flex items-center gap-1 px-3 py-1.5">
+          <button className={`${sideItem(section === 'notes', 'note')} flex-1`} onClick={() => navigate('/notes')}>
+            <span className={`${sideIcon} text-note`}>◆</span>
+            <span className={sideLabel}>Notas</span>
+            {notes.length > 0 && <span className="ml-auto shrink-0 text-[11px] text-dim">{notes.length}</span>}
+          </button>
+          {newButton(createNote, 'Nueva nota')}
         </div>
 
         <div className="px-3 py-1.5">
