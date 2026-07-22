@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { del, get, post } from '../api';
 import type { Plan, PlanLimits, PlanUsage, TeamInfo, User } from '../types';
-import { btnDanger, btnGhost, btnSmall, inputBase, modalBackdrop, modalBox, modalClose } from '../ui';
+import { btnDanger, btnGhost, btnSmall, infoBanner, inputBase, modalBackdrop, modalBox, modalClose } from '../ui';
 import { alertDialog, confirmDialog } from '../dialog';
+import { useModalA11y } from '../useModalA11y';
 
 const FREE_FEATURES = [
   '2 tableros · 50 tarjetas c/u',
@@ -30,13 +31,16 @@ interface Me { user: User; team: TeamInfo; limits: PlanLimits | null; usage: Pla
 
 function UsageBar({ label, used, max }: { label: string; used: number; max: number }) {
   const pct = Math.min(100, Math.round((used / max) * 100));
+  const full = pct >= 100;
   return (
     <div className="flex items-center gap-2 text-[12px]">
       <span className="w-16 text-dim">{label}</span>
-      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-ink">
-        <div className={`h-full rounded-full ${pct >= 100 ? 'bg-danger' : 'bg-accent'}`} style={{ width: `${pct}%` }} />
+      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-ink"
+        role="progressbar" aria-valuenow={used} aria-valuemin={0} aria-valuemax={max}
+        aria-label={`${label}: ${used} de ${max}`}>
+        <div className={`h-full rounded-full ${full ? 'bg-danger' : 'bg-accent'}`} style={{ width: `${pct}%` }} />
       </div>
-      <span className={`w-10 text-right ${pct >= 100 ? 'text-danger' : 'text-dim'}`}>{used}/{max}</span>
+      <span className={`w-10 text-right ${full ? 'text-danger' : 'text-dim'}`}>{used}/{max}</span>
     </div>
   );
 }
@@ -93,26 +97,28 @@ export default function UpgradeModal({ plan, message, onClose, onChanged }: {
 
   const card = 'flex flex-1 flex-col gap-2.5 rounded-xl border p-4';
   const price = (n: string) => <span className="text-[13px]"><strong>{n} US$</strong><span className="text-dim"> /mes</span></span>;
-  const activeBadge = <span className="rounded-full bg-ok/15 px-2 py-0.5 text-[11px] font-semibold text-ok">Tu plan</span>;
+  const activeBadge = <span className="rounded-full bg-ok/15 px-2 py-0.5 text-[11px] font-semibold text-ok" role="status">Tu plan</span>;
+
+  const containerRef = useModalA11y(onClose);
 
   return (
-    <div className={modalBackdrop} onClick={onClose}>
-      <div className={`${modalBox} max-w-[760px]`} onClick={(e) => e.stopPropagation()}>
+    <div ref={containerRef} className={modalBackdrop} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className={`${modalBox} max-w-[760px]`}>
         <div className="flex items-start justify-between">
           <h3 className="font-display text-[20px] font-extrabold tracking-tight">
             {effectivePlan === 'premium' ? '★ Tu plan' : 'Pasa a Premium'}
           </h3>
-          <button className={modalClose} onClick={onClose}>✕</button>
+          <button className={modalClose} aria-label="Cerrar" onClick={onClose}>✕</button>
         </div>
 
         {message && (
-          <div className="rounded-lg border border-board/60 bg-board/10 px-3.5 py-2.5 text-[13px]">
+          <div className={infoBanner('board')} role="status">
             🔒 {message}
           </div>
         )}
 
         {me?.team?.role === 'member' && (
-          <div className="rounded-lg border border-accent/50 bg-accent/10 px-3.5 py-2.5 text-[13px]">
+          <div className={infoBanner('accent')} role="status">
             ★ Tienes Premium por el equipo de <strong>@{me.team.owner}</strong>.
           </div>
         )}
@@ -198,7 +204,10 @@ export default function UpgradeModal({ plan, message, onClose, onChanged }: {
                 </div>
               ))}
               {me.team.members.length === 0 && (
-                <p className="text-[12.5px] text-dim">Aún no invitaste a nadie. Los miembros reciben Premium al instante.</p>
+                <p className="flex flex-col items-center gap-1 rounded-lg bg-raised px-3 py-3 text-center text-[12.5px] text-dim">
+                  <span className="text-xl opacity-60" aria-hidden>👥</span>
+                  Aún no invitaste a nadie. Los miembros reciben Premium al instante.
+                </p>
               )}
             </div>
             {me.team.members.length < me.team.max_members && (

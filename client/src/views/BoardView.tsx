@@ -10,7 +10,7 @@ import ShareModal from './ShareModal';
 import ActivityModal from './ActivityModal';
 import PresenceAvatars, { type PresenceViewer } from './PresenceAvatars';
 import MoreMenu from './MoreMenu';
-import { avatarColor, btnGhost, btnSmall, emptyState, headerBtn, mainHeader, titleChip, viewTitle } from '../ui';
+import { avatarColor, btnGhost, btnSmall, emptyState, GLYPH, headerBtn, mainHeader, segmentedTab, spinnerCls, titleChip, viewTitle } from '../ui';
 import { confirmDialog } from '../dialog';
 
 function CardBadges({ card }: { card: Card }) {
@@ -25,17 +25,18 @@ function CardBadges({ card }: { card: Card }) {
   if (!card.due_date && !hasChecklist && members.length === 0 && !card.completed) return null;
   return (
     <div className="mt-2 flex flex-wrap items-center gap-1.5">
-      {card.completed ? <span className={`${badgeBase} bg-ok/15 text-ok`}>✓ Hecha</span> : null}
-      {card.due_date && <span className={dueClass}>🕓 {card.due_date}</span>}
+      {card.completed ? <span className={`${badgeBase} bg-ok/15 text-ok`}>{GLYPH.done} Hecha</span> : null}
+      {card.due_date && <span className={dueClass} aria-label={`Vence el ${card.due_date}`}>{GLYPH.clock} {card.due_date}</span>}
       {hasChecklist && (
-        <span className={`${badgeBase} bg-ink ${card.checklist_done === card.checklist_total ? 'text-ok' : 'text-dim'}`}>
-          ☑ {card.checklist_done}/{card.checklist_total}
+        <span className={`${badgeBase} bg-ink ${card.checklist_done === card.checklist_total ? 'text-ok' : 'text-dim'}`}
+          aria-label={`Checklist: ${card.checklist_done} de ${card.checklist_total} completadas`}>
+          {GLYPH.checklist} {card.checklist_done}/{card.checklist_total}
         </span>
       )}
       {members.length > 0 && (
-        <span className="ml-auto flex">
+        <span className="ml-auto flex" aria-label={`Asignadas: ${members.join(', ')}`}>
           {members.slice(0, 3).map((m, i) => (
-            <span key={m} title={m}
+            <span key={m} title={m} aria-hidden
               className={`flex h-5 w-5 items-center justify-center rounded-full border-2 border-raised text-[10px] font-bold text-ink ${i > 0 ? '-ml-1.5' : ''}`}
               style={{ background: avatarColor(m) }}>
               {m.slice(0, 1).toUpperCase()}
@@ -88,6 +89,7 @@ export default function BoardView({ boardId, initialCardId, isPremium, currentUs
   currentUserId: number;
 }) {
   const [board, setBoard] = useState<Board | null>(null);
+  const [loadError, setLoadError] = useState(false);
   const [lists, setLists] = useState<List[]>([]);
   const [addingCardTo, setAddingCardTo] = useState<number | null>(null);
   const [addingList, setAddingList] = useState(false);
@@ -102,10 +104,14 @@ export default function BoardView({ boardId, initialCardId, isPremium, currentUs
 
   const load = useCallback(async () => {
     try {
+      setLoadError(false);
       const data = await get<{ board: Board; lists: List[] }>(`/api/boards/${boardId}`);
       setBoard(data.board);
       setLists(data.lists);
-    } catch { setBoard(null); }
+    } catch {
+      setLoadError(true);
+      setBoard(null);
+    }
   }, [boardId]);
 
   useEffect(() => { load(); }, [load]);
@@ -146,39 +152,42 @@ export default function BoardView({ boardId, initialCardId, isPremium, currentUs
     load();
   }
 
-  if (!board) return (
-    <div className={emptyState}>
-      <span className="text-3xl opacity-60">▦</span>
-      <p>No encontramos este tablero. Puede que ya no exista o que hayas perdido el acceso.</p>
-    </div>
-  );
+  if (!board) {
+    if (loadError) return (
+      <div className={emptyState}>
+        <span className="text-3xl opacity-60">{GLYPH.board}</span>
+        <p>No se pudo cargar el tablero. Puede que la conexión haya fallado.</p>
+        <button className={btnSmall} onClick={load}>Reintentar</button>
+      </div>
+    );
+    return (
+      <div className={emptyState + ' gap-3'}>
+        <div className={spinnerCls} aria-label="Cargando tablero" />
+        <span className="text-[13px]">Cargando tablero…</span>
+      </div>
+    );
+  }
   const isViewer = board.myRole === 'viewer';
-
-  const viewTab = (active: boolean) =>
-    `px-3 py-1.5 text-xs transition-colors ${active ? 'bg-board/10 font-semibold text-board' : 'text-dim hover:text-fg'}`;
 
   return (
     <>
       <div className={mainHeader}>
-        <span className={`${titleChip} bg-board/15 text-board`}>▦</span>
+        <span className={`${titleChip} bg-board/15 text-board`} aria-hidden>{GLYPH.board}</span>
         <h2 className={viewTitle + " truncate"}>{board.name}</h2>
         <span className="text-[13px] text-dim">{lists.reduce((n, l) => n + l.cards.length, 0)} tarjetas</span>
-        {board.shared && <span className="text-[12px] text-dim">🤝 compartido por @{board.owner_username}</span>}
+        {board.shared && <span className="text-[12px] text-dim" aria-label={`Compartido por @${board.owner_username}`}>🤝 compartido por @{board.owner_username}</span>}
         <PresenceAvatars viewers={viewers} currentUserId={currentUserId} />
-        <div className="flex max-w-full overflow-x-auto rounded-lg border border-edge bg-panel sm:ml-auto">
-          <button className={viewTab(view === 'kanban')} onClick={() => setView('kanban')}>▦ Tablero</button>
-          <button className={viewTab(view === 'table')}
+        <div className="flex max-w-full overflow-x-auto rounded-lg border border-edge bg-panel sm:ml-auto" role="group" aria-label="Vista del tablero">
+          <button className={segmentedTab(view === 'kanban', 'board')} aria-pressed={view === 'kanban'} onClick={() => setView('kanban')}>{GLYPH.board} Tablero</button>
+          <button className={segmentedTab(view === 'table', 'board')} aria-pressed={view === 'table'}
             onClick={() => isPremium ? setView('table') : notifyPlanBlock('Las vistas Tabla y Calendario son parte de Premium.')}>
             ☰ Tabla{!isPremium && ' 🔒'}
           </button>
-          <button className={viewTab(view === 'calendar')}
+          <button className={segmentedTab(view === 'calendar', 'board')} aria-pressed={view === 'calendar'}
             onClick={() => isPremium ? setView('calendar') : notifyPlanBlock('Las vistas Tabla y Calendario son parte de Premium.')}>
             📅 Calendario{!isPremium && ' 🔒'}
           </button>
         </div>
-        {/* En pantallas chicas estas tres acciones se apilaban en filas
-            propias y empujaban el tablero fuera de la vista; a partir de sm
-            se muestran inline, antes se agrupan en un menú "⋯". */}
         <div className="hidden items-center gap-2 sm:flex">
           {!isViewer && (
             <button className={headerBtn}
@@ -186,8 +195,8 @@ export default function BoardView({ boardId, initialCardId, isPremium, currentUs
               ⚙ Automatización{!isPremium && ' 🔒'}
             </button>
           )}
-          <button className={headerBtn} onClick={() => setShowShare(true)}>🤝 Compartir</button>
-          <button className={headerBtn} onClick={() => setShowActivity(true)}>📋 Actividad</button>
+          <button className={headerBtn} onClick={() => setShowShare(true)} aria-label="Compartir tablero">🤝 Compartir</button>
+          <button className={headerBtn} onClick={() => setShowActivity(true)} aria-label="Ver actividad del tablero">📋 Actividad</button>
         </div>
         <MoreMenu className="sm:hidden" actions={[
           ...(!isViewer ? [{
@@ -197,7 +206,7 @@ export default function BoardView({ boardId, initialCardId, isPremium, currentUs
           { label: '🤝 Compartir', onClick: () => setShowShare(true) },
           { label: '📋 Actividad', onClick: () => setShowActivity(true) },
         ]} />
-        {isViewer && <span className="text-[12px] text-dim">👁 solo lectura</span>}
+        {isViewer && <span className="text-[12px] text-dim" aria-label="Solo lectura">👁 solo lectura</span>}
       </div>
       <div className="min-w-0 flex-1 overflow-auto">
         {view === 'table' && <TableView lists={lists} onOpenCard={setOpenCardId} onChanged={load} isViewer={isViewer} />}
@@ -214,8 +223,8 @@ export default function BoardView({ boardId, initialCardId, isPremium, currentUs
               }}>
               <div className="flex items-center gap-2 px-3.5 py-3 text-[13.5px] font-semibold">
                 <span className="truncate">{list.name}</span>
-                <span className="rounded-full bg-ink px-2 py-0.5 text-[11px] font-normal text-dim">{list.cards.length}</span>
-                {!isViewer && <button className={`${btnGhost} ml-auto`} onClick={() => removeList(list)} title="Eliminar lista">✕</button>}
+                <span className="rounded-full bg-ink px-2 py-0.5 text-[11px] font-normal text-dim" aria-label={`${list.cards.length} tarjetas`}>{list.cards.length}</span>
+                {!isViewer && <button className={`${btnGhost} ml-auto`} onClick={() => removeList(list)} aria-label={`Eliminar lista ${list.name}`} title="Eliminar lista">✕</button>}
               </div>
               <div className="flex min-h-8 flex-col gap-2 overflow-y-auto px-2.5 pb-2.5 pt-1">
                 {list.cards.map((card, i) => {

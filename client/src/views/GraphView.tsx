@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { get, onWsEvent } from '../api';
 import type { GraphEdge, GraphNode } from '../types';
 import { navigate } from '../App';
-import { mainHeader, modalClose, sectionTitle, viewTitle } from '../ui';
+import { emptyInline, GLYPH, inputSm, mainHeader, modalClose, sectionTitle, segmentedTab, viewTitle } from '../ui';
 
 // Los nodos usan el color de su módulo: notas violeta, tarjetas ámbar, canales teal.
 const NODE_COLORS: Record<string, string> = { note: '#b18cfa', card: '#e9a23b', channel: '#3ecfb2' };
@@ -110,6 +110,7 @@ function analyzeGraph(nodes: GraphNode[], edges: GraphEdge[]): Analysis {
 
 export default function GraphView() {
   const [data, setData] = useState<{ nodes: GraphNode[]; edges: GraphEdge[] } | null>(null);
+  const [loadError, setLoadError] = useState(false);
   const [positions, setPositions] = useState<SimNode[]>([]);
   const [hoverKey, setHoverKey] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -120,11 +121,18 @@ export default function GraphView() {
   const dragRef = useRef<{ key: string; offsetX: number; offsetY: number } | null>(null);
 
   useEffect(() => {
-    const load = () => get<{ nodes: GraphNode[]; edges: GraphEdge[] }>('/api/graph').then(setData);
+    let mounted = true;
+    const load = () => {
+      setLoadError(false);
+      get<{ nodes: GraphNode[]; edges: GraphEdge[] }>('/api/graph')
+        .then((d) => { if (mounted) setData(d); })
+        .catch(() => { if (mounted) setLoadError(true); });
+    };
     load();
-    return onWsEvent((e) => {
+    const off = onWsEvent((e) => {
       if (['links:changed', 'notes:changed', 'boards:changed', 'channels:changed', 'board:changed'].includes(e.type)) load();
     });
+    return () => { mounted = false; off(); };
   }, []);
 
   const analysis = useMemo(() => data ? analyzeGraph(data.nodes, data.edges) : null, [data]);
@@ -222,20 +230,22 @@ export default function GraphView() {
     `flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 transition-colors ${
       selected ? 'bg-accent/10 text-fg' : 'text-dim hover:bg-hover hover:text-fg'
     }`;
-  const toggleBtn = (active: boolean) =>
-    `px-2.5 py-1 text-[11.5px] transition-colors ${active ? 'bg-accent/10 font-semibold text-accent' : 'text-dim hover:text-fg'}`;
 
   return (
     <>
       <div className={mainHeader}>
-        <h2 className={viewTitle + " truncate"}>◉ Grafo de conocimiento</h2>
-        <span className="text-[13px] text-dim">
-          {data && analysis
-            ? `${data.nodes.length} nodos · ${data.edges.length} vínculos · ${analysis.communities.filter((c) => c.size > 1).length} comunidades`
-            : 'Cargando…'}
+        <h2 className={viewTitle + " truncate"}>{GLYPH.graph} Grafo de conocimiento</h2>
+        <span className="text-[13px] text-dim" aria-live="polite">
+          {loadError
+            ? 'No se pudo cargar el grafo.'
+            : data && analysis
+              ? `${data.nodes.length} nodos · ${data.edges.length} vínculos · ${analysis.communities.filter((c) => c.size > 1).length} comunidades`
+              : 'Cargando…'}
         </span>
+        {loadError && <button className="rounded-lg border border-edge bg-panel px-3 py-1.5 text-xs text-dim transition-colors hover:border-accent hover:text-fg" onClick={() => { setLoadError(false); get<{ nodes: GraphNode[]; edges: GraphEdge[] }>('/api/graph').then(setData).catch(() => setLoadError(true)); }}>Reintentar</button>}
         {!panelOpen && (
           <button className="ml-auto rounded-lg border border-edge bg-panel px-3 py-1.5 text-xs text-dim transition-colors hover:border-accent hover:text-fg"
+            aria-expanded={panelOpen} aria-label="Mostrar panel de análisis"
             onClick={() => setPanelOpen(true)}>☰ Análisis</button>
         )}
       </div>
@@ -244,7 +254,13 @@ export default function GraphView() {
           onMouseMove={onMouseMove}
           onMouseUp={() => (dragRef.current = null)}
           onMouseLeave={() => (dragRef.current = null)}>
-          <svg className="block h-full w-full">
+          {data && data.nodes.length === 0 && !loadError && (
+            <div className={emptyInline + ' pointer-events-none absolute inset-0'}>
+              <span className="text-2xl opacity-60">{GLYPH.graph}</span>
+              <p>El grafo está vacío. Vincula notas con <code className="rounded border border-edge bg-raised px-1 font-mono text-[11px]">[[Título]]</code> para verlas acá.</p>
+            </div>
+          )}
+          <svg className="block h-full w-full" role="img" aria-label="Grafo de conocimiento">
             {data?.edges.map((edge, i) => {
               const a = byKey.get(edge.source), b = byKey.get(edge.target);
               if (!a || !b) return null;
@@ -267,13 +283,18 @@ export default function GraphView() {
                 <g key={node.key} className="group cursor-pointer transition-opacity duration-150"
                   transform={`translate(${node.x}, ${node.y})`}
                   opacity={dim ? 0.15 : 1}
+                  tabIndex={0}
+                  role="button"
+                  aria-label={`${TYPE_NAMES[node.type]} ${node.label}${deg ? `, ${deg} conexiones` : ''}. Doble clic o Enter para abrir`}
                   onMouseDown={(e) => {
                     const rect = containerRef.current!.getBoundingClientRect();
                     dragRef.current = { key: node.key, offsetX: e.clientX - rect.left - node.x, offsetY: e.clientY - rect.top - node.y };
                   }}
                   onMouseEnter={() => setHoverKey(node.key)}
                   onMouseLeave={() => setHoverKey(null)}
-                  onDoubleClick={() => openNode(node)}>
+                  onClick={() => openNode(node)}
+                  onDoubleClick={() => openNode(node)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openNode(node); } }}>
                   {godKeys.has(node.key) && (
                     <circle r={r + 5} fill="none" stroke={nodeColor(node)} strokeWidth={1.5} opacity={0.45} />
                   )}
@@ -300,28 +321,34 @@ export default function GraphView() {
           )}
 
           {panelOpen && analysis && (
-            <div className="absolute right-2 top-2 flex max-h-[calc(100%-16px)] w-[270px] flex-col gap-3.5 overflow-y-auto rounded-xl border border-edge bg-panel/95 p-3.5 text-xs backdrop-blur-sm sm:right-3.5 sm:top-3.5">
+            // Panel flotante: en pantallas chicas ocupa casi todo el ancho y se
+            // puede colapsar con el ✕; en sm+ vuelve a su tamaño fijo a la derecha.
+            <div className="absolute inset-x-2 bottom-2 top-2 z-40 flex max-h-full w-auto flex-col gap-3.5 overflow-y-auto rounded-xl border border-edge bg-panel/95 p-3.5 text-xs backdrop-blur-sm sm:inset-auto sm:right-3.5 sm:top-3.5 sm:max-h-[calc(100%-16px)] sm:w-[270px]">
               <div className="flex items-center justify-between">
                 <strong className="font-display">Análisis del grafo</strong>
-                <button className={modalClose} onClick={() => setPanelOpen(false)}>✕</button>
+                <button className={modalClose} aria-label="Cerrar panel de análisis" onClick={() => setPanelOpen(false)}>✕</button>
               </div>
-              <input value={search} placeholder="Buscar nodo…"
+              <label className="sr-only" htmlFor="graph-search-input">Buscar nodo</label>
+              <input id="graph-search-input" value={search} placeholder="Buscar nodo…"
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-full rounded-lg border border-edge bg-ink px-2.5 py-1.5 text-xs outline-none transition-colors focus:border-accent" />
-              <div className="flex self-start overflow-hidden rounded-lg border border-edge bg-ink">
-                <button className={toggleBtn(colorMode === 'community')} onClick={() => setColorMode('community')}>Comunidades</button>
-                <button className={toggleBtn(colorMode === 'type')} onClick={() => { setColorMode('type'); setSelectedCommunity(null); }}>Tipo</button>
+                className={`${inputSm} w-full`} />
+              <div className="flex self-start overflow-hidden rounded-lg border border-edge bg-ink" role="group" aria-label="Modo de color">
+                <button className={segmentedTab(colorMode === 'community')} aria-pressed={colorMode === 'community'} onClick={() => setColorMode('community')}>Comunidades</button>
+                <button className={segmentedTab(colorMode === 'type')} aria-pressed={colorMode === 'type'} onClick={() => { setColorMode('type'); setSelectedCommunity(null); }}>Tipo</button>
               </div>
 
               {colorMode === 'community' ? (
                 <div>
                   <h4 className={sectionTitle}>Comunidades</h4>
                   {analysis.communities.filter((c) => c.size > 1).slice(0, 8).map((c) => (
-                    <div key={c.id} className={panelRow(selectedCommunity === c.id)}
-                      onClick={() => setSelectedCommunity(selectedCommunity === c.id ? null : c.id)}>
-                      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: c.color }} />
+                    <div key={c.id} className={panelRow(selectedCommunity === c.id)} role="button" tabIndex={0}
+                      aria-pressed={selectedCommunity === c.id}
+                      aria-label={`${c.label}, ${c.size} nodos`}
+                      onClick={() => setSelectedCommunity(selectedCommunity === c.id ? null : c.id)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedCommunity(selectedCommunity === c.id ? null : c.id); } }}>
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: c.color }} aria-hidden />
                       <span className="flex-1 truncate">{c.label}</span>
-                      <span className="text-dim">{c.size}</span>
+                      <span className="text-dim" aria-hidden>{c.size}</span>
                     </div>
                   ))}
                   {analysis.communities.every((c) => c.size <= 1) && (
@@ -333,7 +360,7 @@ export default function GraphView() {
                   <h4 className={sectionTitle}>Tipos</h4>
                   {Object.entries(NODE_COLORS).map(([t, color]) => (
                     <div key={t} className={panelRow()}>
-                      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: color }} />
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: color }} aria-hidden />
                       <span className="flex-1">{TYPE_NAMES[t]}s</span>
                     </div>
                   ))}
@@ -344,14 +371,16 @@ export default function GraphView() {
                 <div>
                   <h4 className={sectionTitle}>Nodos centrales</h4>
                   {analysis.gods.map((g) => (
-                    <div key={g.key} className={panelRow()}
+                    <div key={g.key} className={panelRow()} role="button" tabIndex={0}
+                      aria-label={`${g.label}, ${g.degree} conexiones`}
                       onMouseEnter={() => setHoverKey(g.key)}
                       onMouseLeave={() => setHoverKey(null)}
-                      onClick={() => { const n = byKey.get(g.key); if (n) openNode(n); }}>
-                      <span className="h-2.5 w-2.5 shrink-0 rounded-full"
+                      onClick={() => { const n = byKey.get(g.key); if (n) openNode(n); }}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); const n = byKey.get(g.key); if (n) openNode(n); } }}>
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-full" aria-hidden
                         style={{ background: byKey.get(g.key) ? nodeColor(byKey.get(g.key)!) : GRAY }} />
                       <span className="flex-1 truncate">{g.label}</span>
-                      <span className="text-dim">{g.degree} ⇄</span>
+                      <span className="text-dim" aria-hidden>{g.degree} ⇄</span>
                     </div>
                   ))}
                 </div>
@@ -371,7 +400,7 @@ export default function GraphView() {
                 </div>
               )}
 
-              <div className="text-dim">Doble clic abre el elemento · arrastra para reordenar</div>
+              <div className="text-dim">Doble clic o Enter abre el elemento · arrastra para reordenar</div>
             </div>
           )}
         </div>

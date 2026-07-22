@@ -3,7 +3,7 @@ import { get, post, patch, del, onWsEvent, notifyPlanBlock, sendWs } from '../ap
 import type { Channel, Message, Reaction, ScheduledMessage, User } from '../types';
 import { renderInlineMarkdown } from '../markdown';
 import { navigate } from '../App';
-import { avatarColor, btnSmall, headerBtn, emptyState, mainHeader, modalClose, titleChip, viewTitle } from '../ui';
+import { avatarColor, btnSmall, headerBtn, emptyState, GLYPH, infoBanner, inputSm, mainHeader, modalClose, popover, titleChip, viewTitle } from '../ui';
 import { alertDialog, confirmDialog } from '../dialog';
 import ShareModal from './ShareModal';
 import PresenceAvatars, { type PresenceViewer } from './PresenceAvatars';
@@ -47,21 +47,30 @@ function MessageItem({ message, user, reactions, inThread, isViewer, onReact, on
 
   const actionBtn = 'rounded-md px-1.5 py-1 text-[13px] transition-colors hover:bg-hover';
 
+  const hoverActions = (
+    <div className="absolute -top-3 right-2 z-10 hidden gap-0.5 rounded-lg border border-edge bg-raised p-0.5 shadow-lg shadow-black/30 group-focus-within:flex group-hover:flex">
+      {!isViewer && QUICK_EMOJIS.slice(0, 3).map((emoji) => (
+        <button key={emoji} type="button" className={actionBtn} onClick={() => onReact(message.id, emoji)}
+          aria-label={`Reaccionar con ${emoji}`} title={`Reaccionar ${emoji}`}>{emoji}</button>
+      ))}
+      {onOpenThread && <button type="button" className={actionBtn} onClick={() => onOpenThread(message.id)}
+        aria-label="Responder en hilo" title="Responder en hilo">{GLYPH.message}</button>}
+      {!isViewer && (
+        <button type="button" className={actionBtn} onClick={() => onPin(message.id)}
+          aria-pressed={!!message.pinned}
+          aria-label={message.pinned ? 'Desfijar mensaje' : 'Fijar mensaje'}
+          title={message.pinned ? 'Desfijar' : 'Fijar mensaje'}>
+          {GLYPH.pin}
+        </button>
+      )}
+      {mine && !isViewer && <button type="button" className={actionBtn} onClick={() => { setDraft(message.content); setEditing(true); }} aria-label="Editar mensaje" title="Editar">{GLYPH.edit}</button>}
+      {mine && !isViewer && <button type="button" className={actionBtn} onClick={() => onDelete(message.id)} aria-label="Eliminar mensaje" title="Eliminar">{GLYPH.trash}</button>}
+    </div>
+  );
+
   return (
     <div className="group relative flex gap-3 rounded-lg px-2 py-1.5 transition-colors hover:bg-panel">
-      <div className="absolute -top-3 right-2 hidden gap-0.5 rounded-lg border border-edge bg-raised p-0.5 shadow-lg shadow-black/30 group-focus-within:flex group-hover:flex">
-        {!isViewer && QUICK_EMOJIS.slice(0, 3).map((emoji) => (
-          <button key={emoji} className={actionBtn} onClick={() => onReact(message.id, emoji)} title={`Reaccionar ${emoji}`}>{emoji}</button>
-        ))}
-        {onOpenThread && <button className={actionBtn} onClick={() => onOpenThread(message.id)} title="Responder en hilo">💬</button>}
-        {!isViewer && (
-          <button className={actionBtn} onClick={() => onPin(message.id)} title={message.pinned ? 'Desfijar' : 'Fijar mensaje'}>
-            {message.pinned ? '📌✕' : '📌'}
-          </button>
-        )}
-        {mine && !isViewer && <button className={actionBtn} onClick={() => { setDraft(message.content); setEditing(true); }} title="Editar">✏️</button>}
-        {mine && !isViewer && <button className={actionBtn} onClick={() => onDelete(message.id)} title="Eliminar">🗑</button>}
-      </div>
+      {hoverActions}
       <div className="flex h-8.5 w-8.5 shrink-0 items-center justify-center rounded-lg text-sm font-bold text-ink"
         style={{ background: avatarColor(message.username) }}>
         {message.username.slice(0, 1).toUpperCase()}
@@ -88,6 +97,9 @@ function MessageItem({ message, user, reactions, inThread, isViewer, onReact, on
           <div className="mt-1 flex flex-wrap gap-1.5">
             {reactions.map((r) => (
               <button key={r.emoji} disabled={isViewer}
+                aria-disabled={isViewer}
+                aria-pressed={!!r.mine}
+                aria-label={r.mine ? `Quitar tu reacción ${r.emoji}` : `Reaccionar con ${r.emoji}`}
                 className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs transition-colors ${
                   r.mine ? 'border-chat bg-chat/10' : 'border-edge bg-raised hover:border-chat'
                 } disabled:cursor-default`}
@@ -100,9 +112,26 @@ function MessageItem({ message, user, reactions, inThread, isViewer, onReact, on
         {!inThread && (message.reply_count ?? 0) > 0 && onOpenThread && (
           <a className="mt-1 inline-block text-xs text-chat hover:brightness-110" href="#"
             onClick={(e) => { e.preventDefault(); onOpenThread(message.id); }}>
-            💬 {message.reply_count} {message.reply_count === 1 ? 'respuesta' : 'respuestas'} — ver hilo
+            {GLYPH.message} {message.reply_count} {message.reply_count === 1 ? 'respuesta' : 'respuestas'} — ver hilo
           </a>
         )}
+        {/* Barra inferior visible solo en pantallas táctiles (donde group-hover
+            no dispara). En md+ el hover/focus toolbar deja fuera esta barra. */}
+        <div className="mt-1 flex flex-wrap items-center gap-0.5 md:hidden">
+          {!isViewer && QUICK_EMOJIS.slice(0, 3).map((emoji) => (
+            <button key={emoji} type="button" className={actionBtn} onClick={() => onReact(message.id, emoji)}
+              aria-label={`Reaccionar con ${emoji}`}>{emoji}</button>
+          ))}
+          {onOpenThread && <button type="button" className={actionBtn} onClick={() => onOpenThread(message.id)} aria-label="Responder en hilo">{GLYPH.message}</button>}
+          {!isViewer && (
+            <button type="button" className={actionBtn} onClick={() => onPin(message.id)}
+              aria-pressed={!!message.pinned} aria-label={message.pinned ? 'Desfijar mensaje' : 'Fijar mensaje'}>
+              {GLYPH.pin}
+            </button>
+          )}
+          {mine && !isViewer && <button type="button" className={actionBtn} onClick={() => { setDraft(message.content); setEditing(true); }} aria-label="Editar mensaje">{GLYPH.edit}</button>}
+          {mine && !isViewer && <button type="button" className={actionBtn} onClick={() => onDelete(message.id)} aria-label="Eliminar mensaje">{GLYPH.trash}</button>}
+        </div>
       </div>
     </div>
   );
@@ -110,6 +139,7 @@ function MessageItem({ message, user, reactions, inThread, isViewer, onReact, on
 
 export default function ChatView({ channelId, user, isPremium }: { channelId: number; user: User; isPremium: boolean }) {
   const [channel, setChannel] = useState<Channel | null>(null);
+  const [loadError, setLoadError] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [reactions, setReactions] = useState<Reaction[]>([]);
   const [pinned, setPinned] = useState<{ id: number; content: string; username: string }[]>([]);
@@ -138,6 +168,7 @@ export default function ChatView({ channelId, user, isPremium }: { channelId: nu
 
   const load = useCallback(async () => {
     try {
+      setLoadError(false);
       const data = await get<{
         channel: Channel; messages: Message[]; reactions: Reaction[];
         pinned: { id: number; content: string; username: string }[];
@@ -146,7 +177,13 @@ export default function ChatView({ channelId, user, isPremium }: { channelId: nu
       setMessages(data.messages);
       setReactions(data.reactions);
       setPinned(data.pinned);
-    } catch { setChannel(null); }
+    } catch {
+      // Diferenciar "se perdió acceso al canal" del "no se pudo cargar" vía
+      // el estado: si loadError es true y channel sigue null y ya teníamos
+      // estado previo, mostramos error reintentable en vez de falso 404.
+      setLoadError(true);
+      setChannel(null);
+    }
   }, [channelId]);
 
   const loadScheduled = useCallback(async () => {
@@ -242,8 +279,9 @@ export default function ChatView({ channelId, user, isPremium }: { channelId: nu
 
   if (!channel) return (
     <div className={emptyState}>
-      <span className="text-3xl opacity-60">#</span>
+      <span className="text-3xl opacity-60">{GLYPH.channel}</span>
       <p>No encontramos este canal. Puede que ya no exista o que hayas perdido el acceso.</p>
+      {loadError && <button className={btnSmall} onClick={load}>Reintentar</button>}
     </div>
   );
 
@@ -259,24 +297,29 @@ export default function ChatView({ channelId, user, isPremium }: { channelId: nu
       </div>
 
       {channel.card_id && (
-        <div className="mx-3 mt-3 flex flex-wrap items-center gap-2 sm:mx-5 rounded-lg border border-board/60 bg-board/10 px-3.5 py-2.5 text-[13px]">
-          <span className="text-board">▦</span> Este canal discute la tarjeta
-          <a href="#" className="text-accent hover:brightness-110" onClick={async (e) => {
-            e.preventDefault();
-            const { card } = await get<{ card: { board_id: number } }>(`/api/cards/${channel.card_id}`);
-            navigate(`/board/${card.board_id}/card/${channel.card_id}`);
-          }}>
+        <div className={`mx-3 mt-3 flex flex-wrap items-center gap-2 sm:mx-5 ${infoBanner('board')}`}>
+          <span className="text-board">{GLYPH.board}</span> Este canal discute la tarjeta
+          <a href="#" className="text-accent hover:brightness-110"
+            aria-label={`Abrir tarjeta: ${channel.card_title ?? `#${channel.card_id}`}`}
+            onClick={async (e) => {
+              e.preventDefault();
+              const { card } = await get<{ card: { board_id: number } }>(`/api/cards/${channel.card_id}`);
+              navigate(`/board/${card.board_id}/card/${channel.card_id}`);
+            }}>
             <strong>{channel.card_title ?? `#${channel.card_id}`}</strong>
           </a>
         </div>
       )}
 
       {pinned.length > 0 && (
-        <div className="mx-3 mt-2.5 cursor-pointer sm:mx-5 rounded-lg border border-edge bg-panel px-3.5 py-2 text-xs text-dim transition-colors hover:border-chat"
-          onClick={() => setShowPinned(!showPinned)}>
-          📌 {pinned.length} {pinned.length === 1 ? 'mensaje fijado' : 'mensajes fijados'} {showPinned ? '▲' : '▼'}
+        <div className="mx-3 mt-2.5 sm:mx-5">
+          <button type="button" className="w-full rounded-lg border border-edge bg-panel px-3.5 py-2 text-xs text-dim transition-colors hover:border-chat"
+            aria-expanded={showPinned} aria-label={`${pinned.length} ${pinned.length === 1 ? 'mensaje fijado' : 'mensajes fijados'}. ${showPinned ? 'Ocultar' : 'Mostrar'}`}
+            onClick={() => setShowPinned(!showPinned)}>
+            {GLYPH.pin} {pinned.length} {pinned.length === 1 ? 'mensaje fijado' : 'mensajes fijados'} {showPinned ? '▲' : '▼'}
+          </button>
           {showPinned && (
-            <div className="mt-2 flex flex-col gap-1">
+            <div className="mt-2 flex flex-col gap-1 rounded-lg rounded-t-0" aria-live="polite">
               {pinned.map((p) => (
                 <div key={p.id} className="border-t border-edge py-1 text-fg">
                   <strong>{p.username}:</strong> {p.content}
@@ -292,14 +335,15 @@ export default function ChatView({ channelId, user, isPremium }: { channelId: nu
           {/* Columna de conversación centrada: en monitores anchos los
               mensajes no se estiran de borde a borde (ancho de lectura). */}
           <div className="flex flex-1 flex-col overflow-y-auto px-3 py-3 sm:px-5 sm:py-4" ref={scrollRef}>
-            <div className="mx-auto flex w-full max-w-[900px] flex-1 flex-col gap-0.5">
+            <div className="mx-auto flex w-full max-w-[900px] flex-1 flex-col gap-0.5"
+              aria-live="polite" aria-label="Mensajes del canal">
             {messages.length === 0 && (
               <div className={`${emptyState} h-auto p-10`}>
-                <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-chat/15 text-xl text-chat">#</span>
+                <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-chat/15 text-xl text-chat">{GLYPH.channel}</span>
                 <p>Todavía no hay mensajes en #{channel.name}. ¡Escribe el primero!</p>
               </div>
             )}
-            {messages.map((m) => (
+            {messages.map((m, i) => (
               <MessageItem key={m.id} message={m} user={user} reactions={reactionsFor(m.id)} isViewer={isViewer}
                 onReact={react} onOpenThread={setThreadId} onPin={pin}
                 onEdit={editMessage} onDelete={deleteMessage} />
@@ -310,24 +354,28 @@ export default function ChatView({ channelId, user, isPremium }: { channelId: nu
           <div className="mx-auto w-full max-w-[940px] shrink-0 px-3 pb-3 pt-3 sm:px-5 sm:pb-4.5">
             {isViewer ? (
               <p className="rounded-xl border border-edge bg-panel px-3 py-2.5 text-center text-[13px] text-dim">
-                👁 Solo lectura — no podés escribir en este canal.
+                {GLYPH.read} Solo lectura — no podés escribir en este canal.
               </p>
             ) : (
             <form onSubmit={send} className="relative flex flex-wrap gap-2 rounded-xl border border-edge bg-panel p-2 transition-colors focus-within:border-chat">
-              <input value={draft} onChange={(e) => setDraft(e.target.value)}
+              <label className="sr-only" htmlFor="chat-draft-input">Mensaje para el canal {channel.name}</label>
+              <input id="chat-draft-input" value={draft} onChange={(e) => setDraft(e.target.value)}
                 placeholder={`Mensaje para #${channel.name}`} autoFocus
+                aria-label={`Mensaje para el canal ${channel.name}`}
                 className="min-w-40 flex-1 bg-transparent px-2 py-1 outline-none" />
               <button type="button" className="px-2 text-[13px] text-dim transition-colors hover:text-fg"
+                aria-label={isPremium ? 'Programar envío' : 'Programar envío (Premium, bloqueado)'}
                 title={isPremium ? 'Programar envío' : 'Programar envío (Premium)'}
                 onClick={() => isPremium ? setShowSchedule(!showSchedule) : notifyPlanBlock('Los mensajes programados son parte de Premium.')}>
-                ⏰{!isPremium && '🔒'}
+                {GLYPH.schedule}{!isPremium && GLYPH.lock}
               </button>
               <button className={btnSmall} type="submit">Enviar</button>
               {showSchedule && (
-                <div className="absolute bottom-full right-0 z-20 mb-2 flex w-[min(16rem,calc(100dvw-2rem))] flex-col gap-2 rounded-xl border border-edge bg-raised p-3 shadow-xl shadow-black/40">
-                  <strong className="text-[13px]">⏰ Enviar más tarde</strong>
-                  <input type="datetime-local" value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)}
-                    className="rounded-lg border border-edge bg-ink px-2.5 py-1.5 text-[13px] outline-none focus:border-accent" />
+                <div className={`${popover} bottom-full right-0 mb-2 flex w-[min(16rem,calc(100dvw-2rem))] flex-col gap-2`}>
+                  <strong className="text-[13px]">{GLYPH.schedule} Enviar más tarde</strong>
+                  <label className="sr-only" htmlFor="chat-schedule-at">Fecha y hora de envío</label>
+                  <input id="chat-schedule-at" type="datetime-local" value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)}
+                    className={inputSm} />
                   <button className={btnSmall} type="button" onClick={schedule}
                     disabled={!draft.trim() || !scheduleAt}>
                     Programar mensaje

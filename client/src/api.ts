@@ -9,6 +9,7 @@ export function getToken() { return token; }
 
 export class ApiError extends Error {
   code?: string;
+  status?: number;
 }
 
 // El servidor responde 403 con estos códigos cuando el plan Free bloquea la
@@ -35,6 +36,7 @@ export async function api<T = any>(path: string, options: RequestInit = {}): Pro
   if (!res.ok) {
     const err = new ApiError(data.error ?? `Error ${res.status}`);
     err.code = data.code;
+    err.status = res.status;
     if (isPlanError(err)) notifyPlanBlock(err.message);
     throw err;
   }

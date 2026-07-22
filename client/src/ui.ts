@@ -16,6 +16,12 @@ const toneActive: Record<Tone, string> = {
   accent: 'bg-accent/10 text-accent font-semibold',
 };
 
+// Tab segmentado: pestaña de una sola fila usada en vistas y paneles.
+// Unifica viewTab (BoardView), toggleBtn (NotesView/GraphView).
+export function segmentedTab(active: boolean, tone: Tone = 'accent'): string {
+  return `px-3 py-1.5 text-xs transition-colors ${active ? `${toneActive[tone]}` : 'text-dim hover:text-fg'}`;
+}
+
 // El borde izquierdo de color en el ítem activo es la firma de navegación:
 // mismo código de color (tablero=ámbar, nota=violeta, chat=teal) que ya
 // usa el resto de la app, ahora también como marca de "estás acá".
@@ -53,8 +59,36 @@ export const iconBtn =
 
 export const inputBase =
   'rounded-lg border border-edge bg-ink px-3 py-2 outline-none transition-colors focus:border-accent';
+// Variante compacta para inputs embebidos en filas (tablas, popovers, filtros,
+// agendas). Antes cada vista reescribía esta misma cadena siete veces.
+export const inputSm =
+  'rounded-lg border border-edge bg-ink px-2.5 py-1.5 text-[13px] outline-none transition-colors focus:border-accent';
 export const selectBase =
   'rounded-lg border border-edge bg-ink px-2.5 py-1.5 text-xs outline-none focus:border-accent';
+
+// Popover flotante: globo con flecha visual implícita (sombra + borde).
+// Pattern repetido en popovers de Chat, grafo, slash menu y CardModal.
+export const popover =
+  'absolute z-30 rounded-xl border border-edge bg-raised p-3 shadow-xl shadow-black/40';
+
+// Banner informativo con borde de tono: avisos de plan, contexto de canal
+// discute-tarjeta, banners de error. Reemplaza(styles) inline repetidos.
+export function infoBanner(tone: Tone = 'accent'): string {
+  const toneBg: Record<Tone, string> = {
+    board: 'border-board/60 bg-board/10',
+    note: 'border-note/60 bg-note/10',
+    chat: 'border-chat/60 bg-chat/10',
+    accent: 'border-accent/60 bg-accent/10',
+  };
+  return `rounded-lg border ${toneBg[tone]} px-3.5 py-2.5 text-[13px]`;
+}
+
+// Spinner reutilizable: antes solo existía inline en App.tsx (loading inicial).
+// LoCentraliza para skeletons/estados de carga de vistas y SearchPalette.
+export const spinnerCls =
+  'h-7 w-7 animate-spin rounded-full border-2 border-edge border-t-accent';
+export const spinnerSmCls =
+  'h-4 w-4 animate-spin rounded-full border-2 border-edge border-t-accent';
 
 export const chip =
   'inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-edge bg-raised px-3 py-1 text-xs transition-colors hover:border-accent';
@@ -93,3 +127,67 @@ export function avatarColor(name: string): string {
   for (const ch of name) hash = (hash * 31 + ch.charCodeAt(0)) | 0;
   return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
 }
+
+/*
+ * Iconografía canónica: un único glifo por concepto. Antes convivían ✓/☑/✅
+ * para "completado", # y ＃ (full-width) para canal, 📌 y 📌✕ para pin… cada SO
+ * los renderiza con métricas distintas y rompían la alineación. Cuando un
+ * botón lleva uno de estos y ningún texto visible, poner siempre el mismo glifo
+ * y un aria-label explícito (ver helpers useModalA11y / ariaLabelBtn abajo).
+ */
+export const GLYPH = {
+  board: '▦',
+  note: '◆',
+  channel: '#',
+  message: '💬',
+  graph: '◉',
+  done: '✓',
+  todo: '☐',
+  checklist: '☑',
+  clock: '🕓',
+  schedule: '⏰',
+  lock: '🔒',
+  shared: '🤝',
+  read: '👁',
+  pin: '📌',
+  trash: '🗑',
+  edit: '✏️',
+  close: '✕',
+  search: '🔍',
+  bell: '🔔',
+  mail: '📬',
+  star: '★',
+  team: '👥',
+  ticket: '🎟',
+  back: '←',
+  forward: '→',
+  up: '↑',
+  down: '↓',
+  reply: '↩',
+  restore: '↩',
+  daily: '☀',
+  template: '📄',
+  history: '🕘',
+  help: '?',
+  download: '⬇',
+  drive: '🗂️',
+  link: '🔗',
+  divider: '—',
+  table: '▦',
+  quote: '❝',
+  bold: 'B',
+  italic: 'I',
+  strike: 'S',
+  code: '‹›',
+  h1: 'H1',
+  h2: 'H2',
+  h3: 'H3',
+  list: '•',
+  plus: '+',
+} as const;
+export type GlyphKey = keyof typeof GLYPH;
+
+// Clase para list-item de empty state embebido (cuando emptyState flex-h-full
+// no aplica porque el contenedor padre no es página completa). Lleva un glifo
+// grande + un texto secundario, igual que emptyState pero en inline.
+export const emptyInline = 'flex flex-col items-center justify-center gap-1.5 px-4 py-8 text-center text-dim';

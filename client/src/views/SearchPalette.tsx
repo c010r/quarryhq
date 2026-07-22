@@ -2,23 +2,29 @@ import { useEffect, useRef, useState } from 'react';
 import { get } from '../api';
 import type { SearchResults } from '../types';
 import { navigate } from '../App';
+import { useModalA11y } from '../useModalA11y';
 
 export default function SearchPalette({ onClose }: { onClose: () => void }) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResults | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  const containerRef = useModalA11y(onClose);
 
   useEffect(() => {
     if (timer.current) clearTimeout(timer.current);
-    if (!query.trim()) { setResults(null); return; }
+    if (!query.trim()) { setResults(null); setError(false); return; }
+    setLoading(true);
+    setError(false);
     timer.current = setTimeout(async () => {
-      setResults(await get<SearchResults>(`/api/search?q=${encodeURIComponent(query.trim())}`));
+      try {
+        setResults(await get<SearchResults>(`/api/search?q=${encodeURIComponent(query.trim())}`));
+      } catch {
+        setError(true);
+      } finally {
+        setLoading(false);
+      }
     }, 200);
   }, [query]);
 
@@ -38,15 +44,19 @@ export default function SearchPalette({ onClose }: { onClose: () => void }) {
   const empty = 'p-6 text-center text-[13px] text-dim';
 
   return (
-    <div className="fixed inset-0 z-100 flex justify-center bg-black/70 px-3 pt-12 backdrop-blur-[2px] animate-fade-in sm:pt-24"
+    <div ref={containerRef} className="fixed inset-0 z-100 flex justify-center bg-black/70 px-3 pt-12 backdrop-blur-[2px] animate-fade-in sm:pt-24"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="flex h-fit max-h-[60vh] w-full max-w-[560px] flex-col overflow-hidden rounded-2xl border border-edge bg-panel shadow-2xl shadow-black/50 animate-modal-in">
-        <input autoFocus placeholder="Buscar tarjetas, notas, mensajes y canales…"
+        <label className="sr-only" htmlFor="quarry-search-input">Buscar</label>
+        <input id="quarry-search-input" autoFocus placeholder="Buscar tarjetas, notas, mensajes y canales…"
           value={query} onChange={(e) => setQuery(e.target.value)}
+          aria-label="Buscar en todo el espacio de trabajo"
           className="border-b border-edge bg-transparent px-4.5 py-4 text-[15px] outline-none" />
-        <div className="overflow-y-auto p-2">
-          {results && total === 0 && <div className={empty}>Sin resultados para “{query}”.</div>}
-          {!results && <div className={empty}>Escribe para buscar en todo el espacio de trabajo.</div>}
+        <div className="overflow-y-auto p-2" aria-live="polite">
+          {error && <div className={empty}>No se pudo buscar. Reintentá en un momento.</div>}
+          {!error && results && total === 0 && <div className={empty}>Sin resultados para “{query}”.</div>}
+          {!error && !results && !loading && <div className={empty}>Escribe para buscar en todo el espacio de trabajo.</div>}
+          {!error && loading && !results && <div className={empty}>Buscando…</div>}
 
           {results && results.cards.length > 0 && (
             <>

@@ -6,7 +6,7 @@ import { MD_COMMANDS, MD_CHEATSHEET, detectMenu, getCaretCoords, type EditorMenu
 import { pickDriveFile, driveFileSnippet } from '../googleDrive';
 import { buildZip } from '../zip';
 import { navigate } from '../App';
-import { chip, emptyState, headerBtn, iconBtn, modalClose, sectionTitle, sideHeading, sideIcon, sideItem, sideLabel, titleChip } from '../ui';
+import { chip, emptyInline, emptyState, GLYPH, headerBtn, iconBtn, inputSm, modalClose, segmentedTab, sectionTitle, sideHeading, sideIcon, sideItem, sideLabel, titleChip } from '../ui';
 import { alertDialog, confirmDialog, promptDialog } from '../dialog';
 import ShareModal from './ShareModal';
 import PresenceAvatars, { type PresenceViewer } from './PresenceAvatars';
@@ -237,10 +237,20 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
       setSaveState('saved');
       setMenu(null);
       loadedId.current = id;
-    } catch {
-      // Borrada, o perdiste el acceso (te sacaron como colaborador)
-      setDetail(null);
-      navigate('/notes');
+    } catch (err: any) {
+      // Diferenciar pérdida de acceso (404拿到了) de un blip transitorio de
+      // red: si vuelve del server 403/404 asumimos borrada/perdida, el resto
+      // se queda viendo estado actual para no perder lo tipeado.
+      const status = err?.status ?? 0;
+      if (status === 403 || status === 404) {
+        setDetail(null);
+        navigate('/notes');
+      } else {
+        // Error transitorio: dejamos el detalle anterior si ya había, no
+        // navegamos. Si no había nada cargado, mostramos el estado vacío.
+        setDetail((prev) => prev);
+        setSaveState((prev) => prev === 'saving' ? 'dirty' : prev);
+      }
     }
   }, []);
 
@@ -553,7 +563,8 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
     `flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] transition-colors ${selected ? 'bg-accent/10' : 'hover:bg-hover'}`;
   const cmdIcon = 'flex h-[22px] w-7 shrink-0 items-center justify-center rounded-md border border-edge bg-ink text-[10.5px] text-dim';
 
-  const toggleBtn = (active: boolean) =>
+  // Modo de vista del editor: toggle agrupado (Editar/Dividida/Vista previa).
+  const modeToggle = (active: boolean) =>
     `px-3 py-1.5 text-xs transition-colors ${active ? 'bg-note/10 font-semibold text-note' : 'text-dim hover:text-fg'}`;
 
   // Columna de escritura centrada con ancho de lectura cómodo (estilo
@@ -641,13 +652,15 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
             <div className={sideHeading}>Etiquetas</div>
             <div className="flex flex-wrap gap-1.5 px-1.5 pb-2 pt-1">
               {tags.map((t) => (
-                <span key={t.tag}
+                <button key={t.tag} type="button"
                   className={`inline-flex cursor-pointer items-center gap-1 rounded-full px-2.5 py-0.5 text-xs transition ${
                     activeTag === t.tag ? 'bg-note/15 text-note' : 'bg-raised text-dim hover:text-fg'
                   }`}
+                  aria-pressed={activeTag === t.tag}
+                  aria-label={`Filtrar por etiqueta ${t.tag}, ${t.count} notas`}
                   onClick={() => setActiveTag(activeTag === t.tag ? null : t.tag)}>
-                  #{t.tag} <span className="opacity-70">{t.count}</span>
-                </span>
+                  #{t.tag} <span className="opacity-70" aria-hidden>{t.count}</span>
+                </button>
               ))}
             </div>
           </>
@@ -663,7 +676,12 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
             {n.shared && <span className="shrink-0 text-[11px] text-dim" title={`Compartida por @${n.owner_username}`}>🤝</span>}
           </button>
         ))}
-        {visibleNotes.length === 0 && <div className="p-6 text-center text-[13px] text-dim">Sin notas.</div>}
+        {visibleNotes.length === 0 && (
+          <div className={`${emptyInline} p-6`}>
+            <span className="text-2xl opacity-60">{GLYPH.note}</span>
+            <p>{activeTag ? `Sin notas con #${activeTag}.` : 'Sin notas todavía.'}</p>
+          </div>
+        )}
       </div>
 
       {detail ? (
@@ -673,21 +691,22 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
             <input value={title}
               onChange={(e) => { setTitle(e.target.value); scheduleSave(e.target.value, content); }}
               readOnly={isViewer}
+              aria-label="Título de la nota"
               className="min-w-40 flex-1 rounded-lg border border-transparent bg-transparent px-2 py-1 font-display text-[17px] font-bold outline-none transition-colors focus:border-accent focus:bg-ink" />
-            <span className="min-w-18 text-right text-xs text-dim">
-              {isViewer ? '👁 solo lectura' : saveState === 'saved' ? '✓ Guardado' : saveState === 'saving' ? 'Guardando…' : 'Sin guardar'}
+            <span className="min-w-18 text-right text-xs text-dim" aria-live="polite" aria-label={isViewer ? 'Solo lectura' : saveState === 'saved' ? 'Guardado' : saveState === 'saving' ? 'Guardando' : 'Cambios sin guardar'}>
+              {isViewer ? `${GLYPH.read} solo lectura` : saveState === 'saved' ? `${GLYPH.done} Guardado` : saveState === 'saving' ? 'Guardando…' : 'Sin guardar'}
             </span>
             {detail.note.shared && (
-              <span className="text-xs text-dim">🤝 compartida por @{detail.note.owner_username}</span>
+              <span className="text-xs text-dim" aria-label={`Compartida por @${detail.note.owner_username}`}>🤝 compartida por @{detail.note.owner_username}</span>
             )}
             {detail.note.updated_by_username && (
               <span className="text-xs text-dim">· editado por @{detail.note.updated_by_username}</span>
             )}
             <PresenceAvatars viewers={viewers} currentUserId={currentUserId} />
-            <div className="flex overflow-hidden rounded-lg border border-edge bg-ink">
-              <button className={toggleBtn(mode === 'edit')} onClick={() => setMode('edit')}>Editar</button>
-              <button className={`${toggleBtn(mode === 'split')} hidden sm:block`} onClick={() => setMode('split')}>Dividida</button>
-              <button className={toggleBtn(mode === 'preview')} onClick={() => setMode('preview')}>Vista previa</button>
+            <div className="flex overflow-hidden rounded-lg border border-edge bg-ink" role="group" aria-label="Modo de la vista">
+              <button className={modeToggle(mode === 'edit')} aria-pressed={mode === 'edit'} onClick={() => setMode('edit')}>Editar</button>
+              <button className={`${modeToggle(mode === 'split')} hidden sm:block`} aria-pressed={mode === 'split'} onClick={() => setMode('split')}>Dividida</button>
+              <button className={modeToggle(mode === 'preview')} aria-pressed={mode === 'preview'} onClick={() => setMode('preview')}>Vista previa</button>
             </div>
             {/* En móvil estas acciones se apilaban en varias filas y le
                 robaban altura al editor; a partir de sm van inline, antes
@@ -718,28 +737,29 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
           </div>
 
           {mode !== 'preview' && !isViewer && (
-            <div className="flex shrink-0 flex-wrap items-center gap-0.5 border-b border-edge px-4 py-1.5">
-              <button className={mdBtn} title="Negrita (Ctrl+B)" onClick={() => wrapSelection('**', '**', 'negrita')}><b>B</b></button>
-              <button className={mdBtn} title="Cursiva (Ctrl+I)" onClick={() => wrapSelection('*', '*', 'cursiva')}><i>I</i></button>
-              <button className={mdBtn} title="Tachado" onClick={() => wrapSelection('~~', '~~', 'tachado')}><s>S</s></button>
-              <button className={mdBtn} title="Código en línea (Ctrl+E)" onClick={() => wrapSelection('`', '`', 'código')}>‹›</button>
-              <span className={toolbarSep} />
-              <button className={mdBtn} title="Encabezado 1" onClick={() => prefixLines('# ')}>H1</button>
-              <button className={mdBtn} title="Encabezado 2" onClick={() => prefixLines('## ')}>H2</button>
-              <button className={mdBtn} title="Encabezado 3" onClick={() => prefixLines('### ')}>H3</button>
-              <span className={toolbarSep} />
-              <button className={mdBtn} title="Lista" onClick={() => prefixLines('- ')}>•</button>
-              <button className={mdBtn} title="Tarea" onClick={() => prefixLines('- [ ] ')}>☐</button>
-              <button className={mdBtn} title="Cita" onClick={() => prefixLines('> ')}>❝</button>
-              <span className={toolbarSep} />
-              <button className={`${mdBtn} text-note`} title="Vincular nota" onClick={() => wrapSelection('[[', ']]', 'Título')}>◆</button>
-              <button className={mdBtn} title="Enlace web" onClick={() => wrapSelection('[', '](https://)', 'texto')}>🔗</button>
-              <button className={mdBtn} title="Tabla" onClick={() => insertBlockAtCaret('| Columna 1 | Columna 2 |\n| --- | --- |\n| $0 |  |')}>▦</button>
-              <button className={mdBtn} title="Divisor" onClick={() => insertBlockAtCaret('---\n$0')}>—</button>
-              <span className={toolbarSep} />
-              <button className={mdBtn} title="Insertar desde Google Drive" onClick={insertFromDrive} disabled={drivePicking}>🗂️</button>
+            <div className="flex shrink-0 flex-wrap items-center gap-0.5 border-b border-edge px-4 py-1.5"
+              role="toolbar" aria-label="Formato markdown">
+              <button className={mdBtn} aria-label="Negrita (Ctrl+B)" title="Negrita (Ctrl+B)" onClick={() => wrapSelection('**', '**', 'negrita')}><b>{GLYPH.bold}</b></button>
+              <button className={mdBtn} aria-label="Cursiva (Ctrl+I)" title="Cursiva (Ctrl+I)" onClick={() => wrapSelection('*', '*', 'cursiva')}><i>{GLYPH.italic}</i></button>
+              <button className={mdBtn} aria-label="Tachado" title="Tachado" onClick={() => wrapSelection('~~', '~~', 'tachado')}><s>{GLYPH.strike}</s></button>
+              <button className={mdBtn} aria-label="Código en línea (Ctrl+E)" title="Código en línea (Ctrl+E)" onClick={() => wrapSelection('`', '`', 'código')}>{GLYPH.code}</button>
+              <span className={toolbarSep} role="separator" aria-hidden />
+              <button className={mdBtn} aria-label="Encabezado 1" title="Encabezado 1" onClick={() => prefixLines('# ')}>{GLYPH.h1}</button>
+              <button className={mdBtn} aria-label="Encabezado 2" title="Encabezado 2" onClick={() => prefixLines('## ')}>{GLYPH.h2}</button>
+              <button className={mdBtn} aria-label="Encabezado 3" title="Encabezado 3" onClick={() => prefixLines('### ')}>{GLYPH.h3}</button>
+              <span className={toolbarSep} role="separator" aria-hidden />
+              <button className={mdBtn} aria-label="Lista con viñetas" title="Lista" onClick={() => prefixLines('- ')}>{GLYPH.list}</button>
+              <button className={mdBtn} aria-label="Tarea" title="Tarea" onClick={() => prefixLines('- [ ] ')}>{GLYPH.todo}</button>
+              <button className={mdBtn} aria-label="Cita" title="Cita" onClick={() => prefixLines('> ')}>{GLYPH.quote}</button>
+              <span className={toolbarSep} role="separator" aria-hidden />
+              <button className={`${mdBtn} text-note`} aria-label="Vincular nota" title="Vincular nota" onClick={() => wrapSelection('[[', ']]', 'Título')}>{GLYPH.note}</button>
+              <button className={mdBtn} aria-label="Enlace web" title="Enlace web" onClick={() => wrapSelection('[', '](https://)', 'texto')}>{GLYPH.link}</button>
+              <button className={mdBtn} aria-label="Insertar tabla" title="Tabla" onClick={() => insertBlockAtCaret('| Columna 1 | Columna 2 |\n| --- | --- |\n| $0 |  |')}>{GLYPH.table}</button>
+              <button className={mdBtn} aria-label="Divisor" title="Divisor" onClick={() => insertBlockAtCaret('---\n$0')}>{GLYPH.divider}</button>
+              <span className={toolbarSep} role="separator" aria-hidden />
+              <button className={mdBtn} aria-label="Insertar desde Google Drive" title="Insertar desde Google Drive" onClick={insertFromDrive} disabled={drivePicking}>{GLYPH.drive}</button>
               <span className="ml-auto hidden pr-1 text-[11.5px] text-dim sm:inline">{words} palabras · {content.length} caracteres</span>
-              <button className={mdBtn} title="Guía Markdown" onClick={() => setShowHelp(true)}>?</button>
+              <button className={mdBtn} aria-label="Guía de sintaxis markdown" title="Guía Markdown" onClick={() => setShowHelp(true)}>{GLYPH.help}</button>
             </div>
           )}
 
@@ -754,41 +774,46 @@ export default function NotesView({ noteId, notes, onChanged, isPremium, current
             )}
           </div>
 
-          {(detail.backlinks.length > 0 || detail.outgoing.length > 0) && (
-            <div className="max-h-44 shrink-0 overflow-y-auto border-t border-edge px-5 py-3.5">
-              {detail.backlinks.length > 0 && (
-                <>
-                  <h4 className={sectionTitle}>← Enlaces entrantes ({detail.backlinks.length})</h4>
-                  <div className="mb-2.5 flex flex-wrap items-center gap-2">
-                    {detail.backlinks.map((b, i) => (
-                      <span key={i} className={chip} onClick={() => {
-                        if (b.source_type === 'note') navigate(`/notes/${b.source_id}`);
-                        else if (b.source_type === 'card') alertDialog(`Vinculada desde la tarjeta: ${b.label}`);
-                        else if (b.source_type === 'message' && b.channel_id) navigate(`/chat/${b.channel_id}`);
-                      }}>
-                        <span className={b.source_type === 'note' ? 'text-note' : b.source_type === 'card' ? 'text-board' : 'text-chat'}>
-                          {b.source_type === 'note' ? '◆' : b.source_type === 'card' ? '▦' : '💬'}
-                        </span>
-                        {(b.label ?? '').slice(0, 50) || '(sin título)'}
-                      </span>
-                    ))}
-                  </div>
-                </>
-              )}
-              {detail.outgoing.length > 0 && (
-                <>
-                  <h4 className={sectionTitle}>→ Enlaces salientes ({detail.outgoing.length})</h4>
-                  <div className="flex flex-wrap items-center gap-2">
-                    {detail.outgoing.map((o) => (
-                      <span key={o.id} className={chip} onClick={() => navigate(`/notes/${o.id}`)}>
-                        <span className="text-note">◆</span>{o.title}
-                      </span>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-          )}
+          // La strip de backlinks se muestra siempre: si la nota está aislada lo
+          // dejamos explícito (típico onboarding de notas recién creadas y
+          // sin vínculos todavía) en vez de ocultar la sección.
+          <div className="max-h-44 shrink-0 overflow-y-auto border-t border-edge px-5 py-3.5">
+            <h4 className={sectionTitle}>← Enlaces entrantes ({detail.backlinks.length})</h4>
+            {detail.backlinks.length > 0 ? (
+              <div className="mb-2.5 flex flex-wrap items-center gap-2">
+                {detail.backlinks.map((b, i) => (
+                  <button key={i} type="button" className={chip}
+                    aria-label={`Abrir ${b.source_type === 'note' ? 'nota' : b.source_type === 'card' ? 'tarjeta' : 'canal'}: ${(b.label ?? '').slice(0, 50) || 'sin título'}`}
+                    onClick={() => {
+                      if (b.source_type === 'note') navigate(`/notes/${b.source_id}`);
+                      else if (b.source_type === 'card') alertDialog(`Vinculada desde la tarjeta: ${b.label}`);
+                      else if (b.source_type === 'message' && b.channel_id) navigate(`/chat/${b.channel_id}`);
+                    }}>
+                    <span className={b.source_type === 'note' ? 'text-note' : b.source_type === 'card' ? 'text-board' : 'text-chat'} aria-hidden>
+                      {b.source_type === 'note' ? GLYPH.note : b.source_type === 'card' ? GLYPH.board : GLYPH.message}
+                    </span>
+                    {(b.label ?? '').slice(0, 50) || '(sin título)'}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="text-[12px] text-dim">Sin backlinks todavía. Escribe <code className="rounded border border-edge bg-raised px-1 font-mono text-[11px]">[[Título de otra nota]]</code> en el cuerpo para enlazarla.</p>
+            )}
+            {detail.outgoing.length > 0 && (
+              <>
+                <h4 className={sectionTitle}>→ Enlaces salientes ({detail.outgoing.length})</h4>
+                <div className="flex flex-wrap items-center gap-2">
+                  {detail.outgoing.map((o) => (
+                    <button key={o.id} type="button" className={chip}
+                      aria-label={`Abrir nota ${o.title}`}
+                      onClick={() => navigate(`/notes/${o.id}`)}>
+                      <span className="text-note" aria-hidden>{GLYPH.note}</span>{o.title}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
         </div>
       ) : (
         <div className={`${emptyState} flex-1`}>
