@@ -590,6 +590,9 @@ app.post('/api/auth/google', h(async (req, res) => {
 app.get('/api/me', requireAuth, h(async (req: AuthedRequest, res) => {
   const plan = await userPlan(req.userId!); // primero: degrada suscripciones vencidas
   const row = await get('SELECT id, username, name, picture, plan, premium_until, is_admin, email, email_verified, theme_preset, theme_accent, theme_bg FROM users WHERE id = $1', [req.userId!]);
+  // ¿Tiene método de pago en Stripe? Lo consume el UpgradeModal para saber si
+  // mostrar "Abrir Portal de Facturación" (solo aparece si existe customer).
+  const stripe = await get<{ customer_id: string }>('SELECT customer_id FROM stripe_customers WHERE user_id = $1', [req.userId!]);
 
   // Información de equipo: titular ve sus miembros; un miembro ve a su titular
   let team: unknown = null;
@@ -619,7 +622,8 @@ app.get('/api/me', requireAuth, h(async (req: AuthedRequest, res) => {
   res.json({
     // user.plan es el plan EFECTIVO (lo que desbloquea la UI); subscription es
     // lo contratado por este usuario ('none' | 'premium' | 'team')
-    user: { ...row, plan, subscription: row.plan === 'free' ? 'none' : row.plan },
+    user: { ...row, plan, subscription: row.plan === 'free' ? 'none' : row.plan,
+            stripe_customer_id: stripe?.customer_id ?? null },
     team,
     limits: plan === 'free' ? FREE_LIMITS : null,
     usage: { boards: boards?.n ?? 0, notes: notes?.n ?? 0, channels: channels?.n ?? 0 },

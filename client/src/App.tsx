@@ -332,6 +332,25 @@ function Workspace({ user, onLogout, onUserChanged }: {
     return () => window.removeEventListener('quarryhq:plan-block', onBlock);
   }, []);
 
+  // Rutas de Stripe tras redirect: #/billing/success (Checkout completado — el
+  // webhook ya puede haber activado el plan, o llegar en los próximos
+  // segundos), #/billing/cancel (usuario cerró Checkout sin pagar) y #/account
+  // (vuelta del Portal). En los tres casos abrimos el modal para confirmar el
+  // estado visible y limpiamos la URL para que no se retrigger al recargar.
+  useEffect(() => {
+    const r = route;
+    if (r[0] === 'billing' && (r[1] === 'success' || r[1] === 'cancel')) {
+      setUpgradeMsg(r[1] === 'success'
+        ? 'Pago procesado. Tu suscripción se activará en unos segundos.'
+        : 'Checkout cancelado. No se realizó ningún cobro.');
+      onUserChanged(); // refresca el perfil (el webhook podría ya haber llegado)
+      navigate('');
+    } else if (r[0] === 'account') {
+      setUpgradeMsg('');
+      navigate('');
+    }
+  }, [route, onUserChanged]);
+
   const refreshSidebar = useCallback(async () => {
     const [b, n, c] = await Promise.all([
       get<{ boards: Board[] }>('/api/boards'),

@@ -13,6 +13,7 @@ export interface User {
   theme_preset?: string;         // paleta de color (exclusivo Premium)
   theme_accent?: string | null;  // acento personalizado en hex, solo si theme_preset === 'custom'
   theme_bg?: string | null;      // clave de fondo predefinido o URL https propia
+  stripe_customer_id?: string | null;  // presente si hay método de pago en Stripe
 }
 export interface InviteCode {
   id: number; code: string; trial_days: number; max_uses: number; used_count: number;
