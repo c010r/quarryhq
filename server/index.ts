@@ -489,14 +489,41 @@ app.post('/api/login', h(async (req, res) => {
   if (rateLimited(`login:${req.ip}:${identifier.toLowerCase()}`, 10, 15 * 60 * 1000)) {
     return res.status(429).json({ error: 'Demasiados intentos. Espera 15 minutos.' });
   }
-  const user = await get<{ id: number; username: string; password_hash: string }>(
-    'SELECT id, username, password_hash FROM users WHERE username = $1 OR LOWER(email) = LOWER($1)', [identifier]);
+  const user = await get<{ id: number; username: string; password_hash: string; email: string | null; email_verified: number }>(
+    'SELECT id, username, password_hash, email, email_verified FROM users WHERE username = $1 OR LOWER(email) = LOWER($1)', [identifier]);
   if (!user || !user.password_hash || !verifyPassword(password ?? '', user.password_hash)) {
     return res.status(401).json({ error: 'Credenciales inválidas' });
+  }
+  // Cuentas con email sin verificar: el usuario puede loguearse pero no accede
+  // a ninguna funcionalidad — la UI le muestra un aviso y le permite reenviar
+  // el correo de verificación. Esto evita que un usuario cree cuentas throwaway
+  // sin confirmar identidad, y además asegura que puede recuperar contraseña si
+  // la olvida (el reset depende del email).
+  if (user.email && !user.email_verified) {
+    return res.status(403).json({ error: 'Debes verificar tu correo antes de iniciar sesión. Revisa tu bandeja de entrada.', code: 'email_not_verified', email: user.email });
   }
   const token = await createSession(user.id);
   setSessionCookie(res, token);
   res.json({ token, user: { id: user.id, username: user.username, plan: await userPlan(user.id) } });
+}));
+
+// Reenvía el correo de verificación. Solo funciona para cuentas que ya tienen
+// email configurado Y todavía no están verificadas. Sin autenticación (el
+// usuario recién se registró y no puede loguearse). Rate-limited.
+app.post('/api/auth/resend-verify', h(async (req, res) => {
+  const email = (req.body?.email ?? '').trim().toLowerCase();
+  if (!EMAIL_RE.test(email)) return res.status(400).json({ error: 'Email inválido' });
+  if (rateLimited(`resend:${req.ip}`, 3, 60 * 60 * 1000)) {
+    return res.status(429).json({ error: 'Demasiados intentos. Espera una hora.' });
+  }
+  const user = await get<{ id: number; email_verified: number }>(
+    'SELECT id, email_verified FROM users WHERE LOWER(email) = LOWER($1)', [email]);
+  if (!user) return res.json({ ok: true }); // no revelamos si el email existe
+  if (user.email_verified) return res.json({ ok: true }); // ya está verificado, no reenviamos
+  const token = await createAuthToken(user.id, 'verify', 7 * 24 * 60 * 60 * 1000);
+  sendMail(email, 'Confirma tu correo en QuarryHQ', verifyEmailHtml(token))
+    .catch((err) => console.error('Error reenviando verificación:', err));
+  res.json({ ok: true });
 }));
 
 // ---------- Verificación de email y reseteo de contraseña ----------

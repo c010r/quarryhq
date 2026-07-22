@@ -124,12 +124,14 @@ function Login({ onAuth }: { onAuth: (user: User) => void }) {
       ? 'El enlace de verificación es inválido o venció.'
       : '');
   const [busy, setBusy] = useState(false);
+  const [unverifiedEmail, setUnverifiedEmail] = useState('');
 
   function switchMode(next: 'login' | 'register' | 'forgot') {
     setMode(next);
     setError('');
     setInfo('');
     setConfirm('');
+    setUnverifiedEmail('');
   }
 
   async function submit(e: React.FormEvent) {
@@ -156,29 +158,44 @@ function Login({ onAuth }: { onAuth: (user: User) => void }) {
         body.username = identifier;
       }
       if (mode === 'register') {
-        // No autologueamos tras el registro: el server igual crea una sesión,
-        // pero no la usamos. Informamos al usuario que verifique su correo y
-        // volvemos al modo login con el email prepoblado para que entre si ya
-        // verificó o puede hacerlo más tarde (la cuenta ya existe y debe
-        // poder iniciar sesión aunque el correo no esté verificado, por eso
-        // /api/login no exige email_verified).
+        // No autologueamos tras el registro: el server crea la cuenta con
+        // email_verified=0 y /api/login requiere verificación. Informamos
+        // al usuario que revise su bandeja y volvemos al modo login.
         await post(`/api/register`, body);
         setInfo(`✓ Cuenta creada. Te enviamos un correo de verificación a ${identifier}. ` +
-          'Inicia sesión con tu email y contraseña.');
+          'Revisa tu bandeja de entrada (y spam) y luego inicia sesión.');
         setPassword('');
         setConfirm('');
         setMode('login');
         setInviteCode('');
+        setUnverifiedEmail(identifier);
         return;
       }
       const data = await post<{ token: string; user: User }>(`/api/login`, body);
       setToken(data.token);
       onAuth(data.user);
     } catch (err: any) {
-      setError(err.message);
+      if (err.code === 'email_not_verified') {
+        setUnverifiedEmail(err.email ?? identifier);
+        setError(err.message);
+      } else {
+        setError(err.message);
+      }
     } finally {
       setBusy(false);
     }
+  }
+
+  async function resendVerification() {
+    if (!unverifiedEmail) return;
+    setBusy(true);
+    setError('');
+    try {
+      await post('/api/auth/resend-verify', { email: unverifiedEmail });
+      setInfo(`Correo reenviado a ${unverifiedEmail}. Revisa tu bandeja de entrada (y spam).`);
+    } catch (err: any) {
+      setError(err.message);
+    } finally { setBusy(false); }
   }
 
   return (
@@ -211,6 +228,12 @@ function Login({ onAuth }: { onAuth: (user: User) => void }) {
         )}
         {error && <div className="text-[13px] text-danger">{error}</div>}
         {info && <div className="text-[13px] text-ok">{info}</div>}
+        {unverifiedEmail && mode === 'login' && (
+          <button type="button" className={btnGhost} disabled={busy}
+            onClick={resendVerification}>
+            Reenviar correo de verificación
+          </button>
+        )}
         <button className={btnPrimary} disabled={busy}>
           {mode === 'login' ? 'Entrar' : mode === 'register' ? 'Crear cuenta' : 'Enviar enlace'}
         </button>
