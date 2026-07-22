@@ -88,6 +88,56 @@ trazable release por release:
   FTS vive en Postgres; backups usan `aws-cli`/`openssl` del sistema.
 - Cliente `client/dist` se recompila en el VPS con `npm run build`.
 
+### Configuración completa de Stripe (paso a paso)
+
+1. **Crear cuenta en Stripe** → https://dashboard.stripe.com/register si no la
+   tienes. Modo **test** primero (con las `sk_test_…` y tarjetas ficticias),
+   luego pasar a **live** (`sk_live_…`).
+2. **Crear dos Productos** en https://dashboard.stripe.com/products
+   - **QuarryHQ Individual** — 9.99 US$/mes recurrente
+   - **QuarryHQ Equipos** — 19.99 US$/mes recurrente
+   - Para cada uno: en "Pricing" → One-time/monthly → "Recurring" → interval
+     "Month" → 9.99 (USD). Guardar y copiar el `price_…` de cada producto.
+3. **Configurar Customer Portal** en
+   https://dashboard.stripe.com/settings/billing/portal
+   - Activar "Allow customers to cancel their subscriptions"
+   - Permitir ver facturas y actualizar método de pago
+   - Guardar.
+4. **Registrar el webhook** en
+   https://dashboard.stripe.com/webhooks → "Add endpoint"
+   - URL: `https://quarryhq.pro/api/billing/webhook`
+   - Events:
+     - `checkout.session.completed`
+     - `invoice.payment_succeeded`
+     - `invoice.payment_failed`
+     - `customer.subscription.deleted`
+   - Copiar el `whsec_…` ("Signing secret").
+5. **Setear variables en el VPS** (actualizar `/opt/quarryhq/.env`):
+   ```
+   STRIPE_SECRET_KEY=sk_live_...        # sk_test_... en staging
+   STRIPE_PRICE_PREMIUM=price_...
+   STRIPE_PRICE_TEAM=price_...
+   STRIPE_WEBHOOK_SECRET=whsec_...
+   ```
+   ```bash
+   sudo systemctl restart quarryhq
+   ```
+6. **Probar el flujo end-to-end** con tarjetas ficticias de Stripe test:
+   - `4242 4242 4242 4242` (Visa, success)
+   - `4000 0000 0000 9995` (declined → dispara `invoice.payment_failed`)
+   - Fecha futura cualquier, CVC cualquier 3 dígitos.
+7. **Sirte CLI para pruebas locales del webhook** (opcional pero recomendado):
+   ```bash
+   stripe listen --forward-to http://localhost:3001/api/billing/webhook
+   stripe trigger checkout.session.completed
+   ```
+   Esto imprime el `whsec_…` que tenés que poner en `STRIPE_WEBHOOK_SECRET`
+   local — distinto del de producción (los endpoints pueden tener cada uno su
+   propia signing secret en Stripe).
+8. **Ir live**: cambiar `sk_test_…` por `sk_live_…` y registrar el webhook de
+   producción (si lo habías creado en modo test, créalo de nuevo con el
+   switch "Viewing test data" **off** en el dashboard). Reiniciar servicio.
+
 ---
 
 ## [1.69] — 2026-07-21
