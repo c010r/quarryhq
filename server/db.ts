@@ -380,6 +380,102 @@ export async function initSchema() {
     CREATE UNIQUE INDEX IF NOT EXISTS notes_owner_title_idx ON notes(owner_id, LOWER(title));
     CREATE UNIQUE INDEX IF NOT EXISTS channels_owner_name_idx ON channels(owner_id, name);
     CREATE UNIQUE INDEX IF NOT EXISTS templates_owner_name_idx ON templates(owner_id, name);
+
+    -- ---------- v1.7: Stripe (facturación real) ----------
+    -- Asociación 1:1 user_id -> Stripe Customer; se reutiliza para el Billing
+    -- Portal y futuras suscripciones. customer_id es único en Stripe.
+    CREATE TABLE IF NOT EXISTS stripe_customers (
+      user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      customer_id TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL DEFAULT ${NOW_UTC}
+    );
+    -- Extiende el registro de pagos (ya existente) con los datos que aporta
+    -- Stripe: id de factura, URLs (PDF + portal hosted), id de suscripción,
+    -- período cubierto y estado (paid | past_due | open | refunded …).
+    ALTER TABLE payments ADD COLUMN IF NOT EXISTS stripe_invoice_id TEXT;
+    ALTER TABLE payments ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT;
+    ALTER TABLE payments ADD COLUMN IF NOT EXISTS invoice_url TEXT;
+    ALTER TABLE payments ADD COLUMN IF NOT EXISTS hosted_invoice_url TEXT;
+    ALTER TABLE payments ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'paid';
+    ALTER TABLE payments ADD COLUMN IF NOT EXISTS period_start TEXT;
+    ALTER TABLE payments ADD COLUMN IF NOT EXISTS period_end TEXT;
+    CREATE INDEX IF NOT EXISTS payments_user_idx ON payments(user_id, id DESC);
+    CREATE INDEX IF NOT EXISTS payments_stripe_invoice_idx ON payments(stripe_invoice_id);
+    -- Marca de renovación para distinguir el cobro inicial de las subsiguientes.
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT;
+
+    -- ---------- v1.7: Búsqueda full-text ----------
+    -- to_tsvector('simple', …) en vez de 'spanish' para soportar correctamente
+    -- @-syntax (websearch_to_tsquery). Las palabras acentuadas funcionan igual
+    -- porque 'simple' no las normaliza; en compensación, el ranking con
+    -- ts_rank_cd queda comparable entre todos los idiomas. Si la app crece se
+    -- puede instalar un diccionario 'spanish' personalizado en el futuro.
+    ALTER TABLE notes ADD COLUMN IF NOT EXISTS fts tsvector;
+    ALTER TABLE cards ADD COLUMN IF NOT EXISTS fts tsvector;
+    ALTER TABLE messages ADD COLUMN IF NOT EXISTS fts tsvector;
+    ALTER TABLE channels ADD COLUMN IF NOT EXISTS fts tsvector;
+    CREATE INDEX IF NOT EXISTS notes_fts_idx ON notes USING GIN (fts);
+    CREATE INDEX IF NOT EXISTS cards_fts_idx ON cards USING GIN (fts);
+    CREATE INDEX IF NOT EXISTS messages_fts_idx ON messages USING GIN (fts);
+    CREATE INDEX IF NOT EXISTS channels_fts_idx ON channels USING GIN (fts);
+
+    -- Funciones + triggers para mantener fts sincronizado en INSERT/UPDATE. La
+    -- columna fts pesa el título (A) más que el contenido (B); el ranking
+    -- ts_rank_cd respeta estos pesos para que el título encaje primero.
+    CREATE OR REPLACE FUNCTION quarryhq_notes_fts() RETURNS trigger AS $$
+    BEGIN
+      NEW.fts := setweight(to_tsvector('simple', coalesce(NEW.title, '')), 'A')
+             || setweight(to_tsvector('simple', coalesce(NEW.content, '')), 'B');
+      RETURN NEW;
+    END;
+    $ LANGUAGE plpgsql;
+    CREATE OR REPLACE FUNCTION quarryhq_cards_fts() RETURNS trigger AS $$
+    BEGIN
+      NEW.fts := setweight(to_tsvector('simple', coalesce(NEW.title, '')), 'A')
+             || setweight(to_tsvector('simple', coalesce(NEW.description, '')), 'B');
+      RETURN NEW;
+    END;
+    $ LANGUAGE plpgsql;
+    CREATE OR REPLACE FUNCTION quarryhq_messages_fts() RETURNS trigger AS $$
+    BEGIN
+      NEW.fts := to_tsvector('simple', coalesce(NEW.content, ''));
+      RETURN NEW;
+    END;
+    $ LANGUAGE plpgsql;
+    CREATE OR REPLACE FUNCTION quarryhq_channels_fts() RETURNS trigger AS $$
+    BEGIN
+      NEW.fts := setweight(to_tsvector('simple', coalesce(NEW.name, '')), 'A');
+      RETURN NEW;
+    END;
+    $ LANGUAGE plpgsql;
+
+    DROP TRIGGER IF EXISTS notes_fts_trg ON notes;
+    CREATE TRIGGER notes_fts_trg BEFORE INSERT OR UPDATE OF title, content ON notes
+      FOR EACH ROW EXECUTE FUNCTION quarryhq_notes_fts();
+    DROP TRIGGER IF EXISTS cards_fts_trg ON cards;
+    CREATE TRIGGER cards_fts_trg BEFORE INSERT OR UPDATE OF title, description ON cards
+      FOR EACH ROW EXECUTE FUNCTION quarryhq_cards_fts();
+    DROP TRIGGER IF EXISTS messages_fts_trg ON messages;
+    CREATE TRIGGER messages_fts_trg BEFORE INSERT OR UPDATE OF content ON messages
+      FOR EACH ROW EXECUTE FUNCTION quarryhq_messages_fts();
+    DROP TRIGGER IF EXISTS channels_fts_trg ON channels;
+    CREATE TRIGGER channels_fts_trg BEFORE INSERT OR UPDATE OF name ON channels
+      FOR EACH ROW EXECUTE FUNCTION quarryhq_channels_fts();
+
+    -- Backfill idempotente: rellena SOLO las filas que aún no tienen fts. Corre
+    -- cada arranque pero es baratísimo si ya están todas (WHERE fts IS NULL no
+    -- escanea nada vía el índice parcial implícito del filtro). En escalado se
+    -- quita y se vuelve a correr manualmente tras migraciones masivas.
+    UPDATE notes SET fts = setweight(to_tsvector('simple', title), 'A')
+                   || setweight(to_tsvector('simple', coalesce(content, '')), 'B')
+     WHERE fts IS NULL;
+    UPDATE cards SET fts = setweight(to_tsvector('simple', title), 'A')
+                   || setweight(to_tsvector('simple', coalesce(description, '')), 'B')
+     WHERE fts IS NULL;
+    UPDATE messages SET fts = to_tsvector('simple', content)
+     WHERE fts IS NULL;
+    UPDATE channels SET fts = setweight(to_tsvector('simple', name), 'A')
+     WHERE fts IS NULL;
   `);
 }
 

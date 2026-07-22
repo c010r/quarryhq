@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import { all, get, run, insert, transaction, initSchema, seedIfEmpty } from './db.ts';
 import { APP_URL, inviteHtml, resetPasswordHtml, sendMail, verifyEmailHtml } from './mailer.ts';
+import { stripeEnabled, createCheckoutSession, createPortalSession, verifyWebhookSignature, type BillingPlan } from './stripe.ts';
 
 const app = express();
 app.set('trust proxy', 1); // nginx delante: req.ip sale de X-Forwarded-For
@@ -21,7 +22,13 @@ app.use((_req, res, next) => {
   }
   next();
 });
-app.use(express.json({ limit: '256kb' }));
+app.use(express.json({
+  limit: '256kb',
+  // Captura el body crudo para el webhook de Stripe: la firma HMAC cubre bytes
+  // exactos y el parser JSON normal lo vacía. verify() corre antes del parse;
+  // guardamos el Buffer para usos posteriores sin afectar el req.body parsed.
+  verify: (req, _res, buf) => { (req as any).rawBody = buf; return true; },
+}));
 
 type AuthedRequest = express.Request & { userId?: number };
 
@@ -637,27 +644,176 @@ app.patch('/api/me/theme', requireAuth, requirePremium, h(async (req: AuthedRequ
   res.json({ ok: true, theme_preset: preset, theme_accent: accent, theme_bg: bg });
 }));
 
-// ---------- Facturación (simulada) ----------
+// ---------- Facturación (v1.7): Stripe real con fallback simulado ----------
+// Si STRIPE_SECRET_KEY está configurado, /api/billing/upgrade responde con la
+// URL de Checkout de Stripe (el usuario paga ahí y un webhook activa el plan).
+// Sin Stripe, el flujo simulado de 30 días queda disponible solo en desarrollo
+// (ALLOW_FAKE_BILLING=1) o si el admin lo habilita explícitamente. El endpoint
+// /api/billing/cancel cambia con Stripe: en vez de cancelar inmediatamente,
+// manda al usuario al Billing Portal de Stripe para que él lo haga (y el webhook
+// confirma la degradación a Free al final del período).
 app.post('/api/billing/upgrade', requireAuth, h(async (req: AuthedRequest, res) => {
+  const tier: BillingPlan = req.body?.plan === 'team' ? 'team' : 'premium';
+  if (stripeEnabled()) {
+    const me = await get<{ email: string | null; name: string | null }>(
+      'SELECT email, name FROM users WHERE id = $1', [req.userId!]);
+    try {
+      const { url } = await createCheckoutSession({
+        userId: req.userId!,
+        plan: tier,
+        customerEmail: me?.email ?? null,
+        customerName: me?.name ?? null,
+        appUrl: APP_URL,
+      });
+      return res.json({ mode: 'stripe', url });
+    } catch (err: any) {
+      return res.status(502).json({ error: err?.message ?? 'No se pudo crear la sesión de pago' });
+    }
+  }
+  // Modo simulado: respetar la protección en producción del README.
   if (process.env.NODE_ENV === 'production' && process.env.ALLOW_FAKE_BILLING !== '1') {
     return res.status(501).json({ error: 'La activación de planes requiere una pasarela de pago configurada' });
   }
-  // Simulación local: extiende 30 días desde ahora, o desde el vencimiento si aún queda saldo.
-  const tier = req.body?.plan === 'team' ? 'team' : 'premium';
   const row = await get<{ premium_until: string | null }>('SELECT premium_until FROM users WHERE id = $1', [req.userId!]);
   const nowIso = new Date().toISOString();
   const from = row?.premium_until && row.premium_until > nowIso ? new Date(row.premium_until) : new Date();
   const until = new Date(from.getTime() + PREMIUM_DAYS * 24 * 60 * 60 * 1000).toISOString();
   await run(`UPDATE users SET plan = $1, premium_until = $2 WHERE id = $3`, [tier, until, req.userId!]);
-  // Registro del cobro (la pasarela real reemplaza el método 'simulado')
-  await insert('INSERT INTO payments (user_id, plan, amount_cents, days) VALUES ($1, $2, $3, $4)',
-    [req.userId!, tier, PLAN_PRICES_CENTS[tier], PREMIUM_DAYS]);
-  res.json({ plan: tier, premium_until: until });
+  await insert('INSERT INTO payments (user_id, plan, amount_cents, days, method) VALUES ($1, $2, $3, $4, $5)',
+    [req.userId!, tier, PLAN_PRICES_CENTS[tier], PREMIUM_DAYS, 'simulado']);
+  res.json({ mode: 'simulado', plan: tier, premium_until: until });
+}));
+
+app.post('/api/billing/portal', requireAuth, h(async (req: AuthedRequest, res) => {
+  if (!stripeEnabled()) return res.status(400).json({ error: 'Stripe no configurado' });
+  const c = await get<{ customer_id: string }>('SELECT customer_id FROM stripe_customers WHERE user_id = $1', [req.userId!]);
+  if (!c) return res.status(404).json({ error: 'Aún no tenés un método de pago asociado' });
+  try {
+    const { url } = await createPortalSession(c.customer_id, APP_URL);
+    res.json({ url });
+  } catch (err: any) {
+    res.status(502).json({ error: err?.message ?? 'No se pudo abrir el portal de facturación' });
+  }
 }));
 
 app.post('/api/billing/cancel', requireAuth, h(async (req: AuthedRequest, res) => {
+  // Con Stripe, el usuario debe cancelar desde el portal (mantiene el Premium
+  // hasta el fin del período que ya pagó); el webhook aplica la degradación a
+  // Free al vencer. Sin Stripe sigue siendo cancelación inmediata local.
+  if (stripeEnabled()) {
+    return res.status(409).json({ error: 'Cancelá desde el Portal de Facturación para conservar lo ya pagado', code: 'use_portal' });
+  }
   await run(`UPDATE users SET plan = 'free', premium_until = NULL WHERE id = $1`, [req.userId!]);
   res.json({ plan: 'free', premium_until: null });
+}));
+
+// Webhook de Stripe: el body crudo ya fue capturado por el verify() del parser
+// global (req.rawBody); usamos ése para verificar la firma HMAC — el req.body
+// parseado por JSON también está disponible si lo necesitamos.
+app.post('/api/billing/webhook', async (req, res) => {
+  if (!stripeEnabled()) return res.status(404).json({ error: 'Stripe no configurado' });
+  const raw = (req as any).rawBody as Buffer | undefined;
+  const event = verifyWebhookSignature(raw ?? Buffer.alloc(0), req.headers['stripe-signature'] as string | undefined);
+  if (!event) return res.status(400).json({ error: 'Firma inválida' });
+  try {
+    switch (event.type) {
+      case 'checkout.session.completed': {
+        const session = event.data.object;
+        const userId = Number(session.metadata?.user_id ?? session.client_reference_id ?? 0);
+        const plan = (session.metadata?.plan ?? 'premium') as BillingPlan;
+        const periodEnd = new Date((session.subscription?.current_period_end ?? 0) * 1000).toISOString();
+        if (userId > 0) {
+          await run(
+            `UPDATE users SET plan = $1, premium_until = $2, stripe_subscription_id = $3 WHERE id = $4`,
+            [plan, periodEnd, session.subscription ?? null, userId]);
+        }
+        break;
+      }
+      case 'invoice.payment_succeeded': {
+        const inv = event.data.object;
+        const customerId = inv.customer;
+        // metadata.user_id viaja desde el Checkout; las facturas recurrentes
+        // posteriores lo heredan del subscription, y si no, lo sacamos por
+        // el customer_id (lookup en stripe_customers).
+        let userId = Number(inv.metadata?.user_id ?? 0);
+        if (!userId && customerId) {
+          const row = await get<{ user_id: number }>('SELECT user_id FROM stripe_customers WHERE customer_id = $1', [customerId]);
+          userId = row?.user_id ?? 0;
+        }
+        const periodStart = new Date((inv.period_start ?? 0) * 1000).toISOString();
+        const periodEnd = new Date((inv.period_end ?? 0) * 1000).toISOString();
+        // Idempotente: si la factura ya fue registrada, no duplicar.
+        if (userId > 0) {
+          const existing = await get<{ id: number }>('SELECT id FROM payments WHERE stripe_invoice_id = $1', [inv.id]);
+          if (!existing) {
+            const plan: BillingPlan = inv.metadata?.plan === 'team' ? 'team' : 'premium';
+            await insert(
+              `INSERT INTO payments (user_id, plan, amount_cents, currency, days, method, stripe_invoice_id,
+                stripe_subscription_id, invoice_url, hosted_invoice_url, status, period_start, period_end)
+               VALUES ($1, $2, $3, $4, $5, 'stripe', $6, $7, $8, $9, 'paid', $10, $11)`,
+              [userId, plan, inv.amount_paid, inv.currency.toUpperCase(), PREMIUM_DAYS, inv.id, inv.subscription,
+                inv.invoice_pdf ?? null, inv.hosted_invoice_url ?? null, periodStart, periodEnd]);
+          }
+          // Renueva el período cubierto por esta factura.
+          await run('UPDATE users SET premium_until = $1 WHERE id = $2', [periodEnd, userId]);
+        }
+        break;
+      }
+      case 'invoice.payment_failed': {
+        // Dunning: registar la factura caída y avisar por email para que el
+        // usuario actualice su método de pago desde el portal.
+        const inv = event.data.object;
+        const customerId = inv.customer;
+        const row = await get<{ user_id: number; email: string | null; username: string }>(
+          `SELECT users.id AS user_id, users.email, users.username FROM users
+           JOIN stripe_customers sc ON sc.user_id = users.id WHERE sc.customer_id = $1`, [customerId]);
+        if (row?.email) {
+          await sendMail(row.email, 'Problema con tu pago de QuarryHQ',
+            `<p>Hola @${row.username},</p>
+             <p>No pudimos cobrar tu suscripción a QuarryHQ. <strong>Actualizá tu método de pago</strong> desde el portal
+             para no perder los beneficios Premium.</p>
+             <p class="cta"><a href="${APP_URL}/#/account">Gestionar suscripción</a></p>`);
+        }
+        const existing = await get<{ id: number }>('SELECT id FROM payments WHERE stripe_invoice_id = $1', [inv.id]);
+        if (!existing && row) {
+          await insert(
+            `INSERT INTO payments (user_id, plan, amount_cents, currency, days, method, stripe_invoice_id,
+              stripe_subscription_id, hosted_invoice_url, status, period_start, period_end)
+             VALUES ($1, 'premium', $2, $3, $4, 'stripe', $5, $6, $7, 'past_due', $8, $9)`,
+            [row.user_id, inv.amount_due ?? 0, (inv.currency ?? 'USD').toUpperCase(), PREMIUM_DAYS, inv.id, inv.subscription,
+             inv.hosted_invoice_url ?? null,
+             new Date((inv.period_start ?? 0) * 1000).toISOString(),
+             new Date((inv.period_end ?? 0) * 1000).toISOString()]);
+        }
+        break;
+      }
+      case 'customer.subscription.deleted': {
+        const sub = event.data.object;
+        await run(`UPDATE users SET plan = 'free', premium_until = NULL, stripe_subscription_id = NULL
+                   WHERE stripe_subscription_id = $1`, [sub.id]);
+        break;
+      }
+      default:
+        // Eventos no relevantes (por ahora): los ack sin log.
+        break;
+    }
+    res.json({ received: true });
+  } catch (err) {
+    console.error('[stripe webhook] error en', event.type, err);
+    // 400 le dice a Stripe que reintente; 200 confirma recepción.
+    res.status(500).json({ error: 'internal' });
+  }
+});
+
+// Listado de facturas del usuario (panel de cuenta): junta los pagos simulados
+// antiguos y los cobros reales de Stripe en una sola vista cronológica.
+app.get('/api/billing/invoices', requireAuth, h(async (req: AuthedRequest, res) => {
+  const rows = await all(
+    `SELECT id, plan, amount_cents, currency, days, method, invoice_url, hosted_invoice_url,
+            status, period_start, period_end, created_at
+     FROM payments WHERE user_id = $1 ORDER BY id DESC LIMIT 50`,
+    [req.userId!]);
+  res.json({ invoices: rows });
 }));
 
 // ---------- Códigos de invitación: canje y administración ----------
@@ -1748,30 +1904,73 @@ app.get('/api/graph', requireAuth, h(async (req: AuthedRequest, res) => {
   res.json({ nodes, edges });
 }));
 
-// ---------- Búsqueda unificada ----------
+// ---------- Búsqueda unificada (full-text desde v1.7) ----------
+// websearch_to_tsquery acepta operadores estandarizados: `"frase exacta"`,
+// `OR`, `-excluir`. Si la consulta es muy corta (<4 carácteres y sin espacios),
+// el FTS puede no tokenizear nada útil y devolver vacío, así que caemos a
+// ILIKE como fallback para preservar el comportamiento anterior ("escribí dos
+// de 'dom' y encontra 'domingo'"). El ranking es ts_rank_cd sobre el tsvector
+// precomputado (A=title, B=body) y ts_headline arma un snippet con resaltado
+// del match (limitado a 120 carácteres para el chat, 160 para notas).
 app.get('/api/search', requireAuth, h(async (req: AuthedRequest, res) => {
   const q = String(req.query.q ?? '').trim();
   if (!q) return res.json({ cards: [], notes: [], messages: [], channels: [] });
   const like = `%${q}%`;
+  const tsquery = `websearch_to_tsquery('simple', ${escapeLiteral(q)})`;
+  const isLongEnough = q.length >= 4 || q.trim().includes(' ');
+  const ftsClause = isLongEnough ? `cards.fts @@ ${tsquery}` : `false`;
   const [cards, notes, messages, channels] = await Promise.all([
     all(`
-      SELECT cards.id, cards.title, lists.board_id FROM cards
+      SELECT cards.id, cards.title, lists.board_id,
+        CASE WHEN ${ftsClause} THEN ts_rank_cd(cards.fts, ${tsquery}) ELSE 0 END AS rank,
+        ts_headline('simple', coalesce(cards.description, ''), ${tsquery},
+          'MinWords=8, MaxWords=20, ShortWord=2, MaxFragments=1, FragmentDelimiter=" … "') AS excerpt
+      FROM cards
       JOIN lists ON lists.id = cards.list_id
       JOIN boards ON boards.id = lists.board_id
       WHERE (boards.owner_id = $2 OR EXISTS (SELECT 1 FROM resource_shares WHERE resource_type = 'board' AND resource_id = boards.id AND user_id = $2))
-        AND (cards.title ILIKE $1 OR cards.description ILIKE $1) LIMIT 10
+        AND (${ftsClause} OR cards.title ILIKE $1 OR cards.description ILIKE $1)
+      ORDER BY rank DESC, cards.id DESC LIMIT 10
     `, [like, req.userId!]),
-    all(`SELECT id, title FROM notes WHERE ${sharedOr('note', 2)} AND (title ILIKE $1 OR content ILIKE $1) LIMIT 10`, [like, req.userId!]),
     all(`
-      SELECT messages.id, substr(messages.content, 1, 120) AS content, messages.channel_id, channels.name AS channel_name, users.username
-      FROM messages JOIN channels ON channels.id = messages.channel_id JOIN users ON users.id = messages.user_id
-      WHERE (channels.owner_id = $2 OR EXISTS (SELECT 1 FROM resource_shares WHERE resource_type = 'channel' AND resource_id = channels.id AND user_id = $2))
-        AND messages.content ILIKE $1 ORDER BY messages.id DESC LIMIT 10
+      SELECT id, title,
+        CASE WHEN notes.fts @@ ${tsquery} THEN ts_rank_cd(notes.fts, ${tsquery}) ELSE 0 END AS rank,
+        ts_headline('simple', coalesce(notes.content, ''), ${tsquery},
+          'MinWords=12, MaxWords=28, ShortWord=2, MaxFragments=1, FragmentDelimiter=" … "') AS excerpt
+      FROM notes
+      WHERE ${sharedOr('note', 2)} AND (notes.fts @@ ${tsquery} OR notes.title ILIKE $1 OR notes.content ILIKE $1)
+      ORDER BY rank DESC, id DESC LIMIT 10
     `, [like, req.userId!]),
-    all(`SELECT id, name FROM channels WHERE ${sharedOr('channel', 2)} AND name ILIKE $1 LIMIT 10`, [like, req.userId!]),
+    all(`
+      SELECT messages.id,
+        ts_headline('simple', messages.content, ${tsquery},
+          'MinWords=6, MaxWords=14, ShortWord=2, MaxFragments=1, FragmentDelimiter=" … "') AS content,
+        messages.channel_id, channels.name AS channel_name, users.username,
+        CASE WHEN messages.fts @@ ${tsquery} THEN ts_rank_cd(messages.fts, ${tsquery}) ELSE 0 END AS rank
+      FROM messages
+      JOIN channels ON channels.id = messages.channel_id
+      JOIN users ON users.id = messages.user_id
+      WHERE (channels.owner_id = $2 OR EXISTS (SELECT 1 FROM resource_shares WHERE resource_type = 'channel' AND resource_id = channels.id AND user_id = $2))
+        AND (messages.fts @@ ${tsquery} OR messages.content ILIKE $1)
+      ORDER BY rank DESC, messages.id DESC LIMIT 10
+    `, [like, req.userId!]),
+    all(`
+      SELECT id, name,
+        CASE WHEN channels.fts @@ ${tsquery} THEN ts_rank_cd(channels.fts, ${tsquery}) ELSE 0 END AS rank
+      FROM channels
+      WHERE ${sharedOr('channel', 2)} AND (channels.fts @@ ${tsquery} OR channels.name ILIKE $1)
+      ORDER BY rank DESC, id DESC LIMIT 10
+    `, [like, req.userId!]),
   ]);
   res.json({ cards, notes, messages, channels });
 }));
+
+// Escapa un literal para incrustar dentro del tsquery construido por string.
+// Reemplaza comillas simples y caracteres especiales de SQL; el resultado va
+// encerrado en single quotes dentro de la consulta.
+function escapeLiteral(s: string): string {
+  return "'" + s.replace(/'/g, "''") + "'";
+}
 
 // ---------- Gestión de colaboradores (compartir tableros/notas/canales) ----------
 // Invitar (solo el dueño) manda un correo y crea una fila pendiente en

@@ -25,10 +25,16 @@ SaaS de espacio de trabajo que combina lo mejor de tres herramientas, **todas vi
 
 Los límites se aplican **en el servidor** (`403` con código `premium_required` o
 `limit_reached`); el cliente muestra candados 🔒 y abre el modal de upgrade al
-recibirlos. El pago es simulado: `POST /api/billing/upgrade` (`{plan: 'premium'|'team'}`)
-activa 30 días renovables (ahí se integraría Stripe/MercadoPago) y
-`POST /api/billing/cancel` vuelve a Free. Una suscripción vencida se degrada sola
-en el siguiente acceso. El titular del plan Equipos invita miembros por username
+recibirlos. Desde **v1.7** el pago es real con **Stripe** (configurable vía env;
+ver §Producción). Si `STRIPE_SECRET_KEY` no está definido, el flujo simulado de
+30 días sigue disponible en desarrollo (`ALLOW_FAKE_BILLING=1` para habilitarlo
+en prod). Endpoints: `POST /api/billing/upgrade` (`{plan:'premium'|'team'}`)
+responde con `{url}` de Checkout de Stripe; `POST /api/billing/portal` devuelve
+la URL del Billing Portal (gestionar método de pago, ver facturas, cancelar);
+`POST /api/billing/cancel` con Stripe responde 409 `use_portal` (preserva el
+período ya pagado, el webhook aplica la degradación al vencer); `GET /api/billing/invoices`
+devuelve el historial cronológico de cobros. Una suscripción vencida se degrada
+sola en el siguiente acceso. El titular del plan Equipos invita miembros por username
 (`POST /api/team/members`) y estos reciben Premium mientras el equipo esté activo.
 
 ### Códigos de invitación
@@ -76,6 +82,25 @@ Las variables se pueden definir en un `.env` en la raíz (ignorado por git), p. 
 ```
 GOOGLE_CLIENT_ID=xxxxx.apps.googleusercontent.com
 GOOGLE_API_KEY=xxxxx           # opcional: habilita "Insertar desde Google Drive"
+
+# v1.7 — Stripe (facturación real). Sin esto, billing cae a modo simulado.
+STRIPE_SECRET_KEY=sk_live_…   # o sk_test_… para pruebas
+STRIPE_WEBHOOK_SECRET=whsec_…
+STRIPE_PRICE_PREMIUM=price_…  # precio mensual recurrente Individual
+STRIPE_PRICE_TEAM=price_…    # precio mensual recurrente Equipos
+# Opcional: para mantener el flujo simulado en producción mientras se configura Stripe.
+ALLOW_FAKE_BILLING=0
+
+# v1.7 — Backups off-site (subidas a S3/R2). Sin esto, /var/backups sigue funcionando.
+BACKUP_S3_ENDPOINT=https://s3.amazonaws.com        # o https://<acct>.r2.cloudflarestorage.com
+BACKUP_S3_BUCKET=quarryhq-backups
+BACKUP_S3_PREFIX=db/
+BACKUP_S3_ACCESS_KEY=AKIA…
+BACKUP_S3_SECRET_KEY=…
+BACKUP_S3_REGION=us-east-1
+BACKUP_RETENTION_DAYS=30
+BACKUP_ENCRYPTION_PASS=…                          # opcional: AES-256 del dump antes de upload
+BACKUP_ENCRYPTION_SALT=…                          # recomendado si usás encriptación
 ```
 
 ```bash
@@ -138,7 +163,17 @@ echo '15 4 * * * root /usr/local/bin/quarryhq-backup' | sudo tee /etc/cron.d/qua
 
 Requisitos externos: registro DNS `A` de `quarryhq.pro` → IP del VPS,
 y añadir `https://quarryhq.pro` a los orígenes autorizados del OAuth
-client en Google Cloud.
+client en Google Cloud. Para **Stripe v1.7**: crear los Prices mensuales en
+https://dashboard.stripe.com/products (Individual 9.99 US$/mes y Equipos
+19.99 US$/mes), copiar los `price_…` al `.env`, registrar el webhook en
+https://dashboard.stripe.com/webhooks apuntando a `https://quarryhq.pro/api/billing/webhook`
+con eventos `checkout.session.completed`, `invoice.payment_succeeded`,
+`invoice.payment_failed`, `customer.subscription.deleted`, y copiar el `whsec_…`
+al `.env` (STRIPE_WEBHOOK_SECRET). Habilitar el **Customer Portal** en
+https://dashboard.stripe.com/settings/billing/portal. Para **backups off-site**:
+instalar `awscli` en el VPS (`sudo apt install -y awscli jq`), crear el bucket
+en el proveedor que uses (S3, Cloudflare R2, Backblaze B2, MinIO…) y setear las
+credenciales en `EnvironmentFile=/etc/quarryhq/backup.env` (ver `deploy/quarryhq.service`).
 
 Actualizar: `cd /opt/quarryhq && sudo -u quarryhq git pull && sudo -u quarryhq npm ci && sudo -u quarryhq npm run build && sudo systemctl restart quarryhq`
 

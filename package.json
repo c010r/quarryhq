@@ -1,6 +1,6 @@
 {
   "name": "quarryhq",
-  "version": "1.69.0",
+  "version": "1.7.0",
   "private": true,
   "description": "SaaS que combina tableros kanban, notas enlazadas y chat en tiempo real",
   "type": "module",
