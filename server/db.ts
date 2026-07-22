@@ -428,26 +428,26 @@ export async function initSchema() {
              || setweight(to_tsvector('simple', coalesce(NEW.content, '')), 'B');
       RETURN NEW;
     END;
-    $ LANGUAGE plpgsql;
+    $$ LANGUAGE plpgsql;
     CREATE OR REPLACE FUNCTION quarryhq_cards_fts() RETURNS trigger AS $$
     BEGIN
       NEW.fts := setweight(to_tsvector('simple', coalesce(NEW.title, '')), 'A')
              || setweight(to_tsvector('simple', coalesce(NEW.description, '')), 'B');
       RETURN NEW;
     END;
-    $ LANGUAGE plpgsql;
+    $$ LANGUAGE plpgsql;
     CREATE OR REPLACE FUNCTION quarryhq_messages_fts() RETURNS trigger AS $$
     BEGIN
       NEW.fts := to_tsvector('simple', coalesce(NEW.content, ''));
       RETURN NEW;
     END;
-    $ LANGUAGE plpgsql;
+    $$ LANGUAGE plpgsql;
     CREATE OR REPLACE FUNCTION quarryhq_channels_fts() RETURNS trigger AS $$
     BEGIN
       NEW.fts := setweight(to_tsvector('simple', coalesce(NEW.name, '')), 'A');
       RETURN NEW;
     END;
-    $ LANGUAGE plpgsql;
+    $$ LANGUAGE plpgsql;
 
     DROP TRIGGER IF EXISTS notes_fts_trg ON notes;
     CREATE TRIGGER notes_fts_trg BEFORE INSERT OR UPDATE OF title, content ON notes
