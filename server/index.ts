@@ -6,6 +6,15 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { all, get, run, insert, transaction, initSchema, seedIfEmpty } from './db.ts';
 import { APP_URL, inviteHtml, resetPasswordHtml, sendMail, verifyEmailHtml } from './mailer.ts';
 import { stripeEnabled, createCheckoutSession, createPortalSession, verifyWebhookSignature, type BillingPlan } from './stripe.ts';
+import { paddleEnabled, createCheckout, cancelSubscription, verifyWebhookSignature as verifyPaddleWebhook } from './paddle.ts';
+// BillingPlan se exporta tambien desde paddle.ts, pero Stripe ya lo define con
+// el mismo nombre — reusamos el de Stripe para ambos.
+type BillingProvider = 'paddle' | 'stripe' | 'simulado';
+function billingProvider(): BillingProvider | null {
+  if (paddleEnabled()) return 'paddle';
+  if (stripeEnabled()) return 'stripe';
+  return null;
+}
 
 const app = express();
 app.set('trust proxy', 1); // nginx delante: req.ip sale de X-Forwarded-For
@@ -16,7 +25,7 @@ app.use((_req, res, next) => {
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   res.setHeader('Content-Security-Policy',
-    "default-src 'self'; script-src 'self' https://accounts.google.com/gsi/client https://apis.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://oauth2.googleapis.com; frame-src https://accounts.google.com https://docs.google.com https://drive.google.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
+    "default-src 'self'; script-src 'self' https://accounts.google.com/gsi/client https://apis.google.com https://cdn.paddle.com https://checkout.paddle.com https://sandbox-checkout.paddle.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://oauth2.googleapis.com https://api.paddle.com https://api-sandboxapi.paddle.com https://checkout.paddle.com https://sandbox-checkout.paddle.com; frame-src https://accounts.google.com https://docs.google.com https://drive.google.com https://checkout.paddle.com https://sandbox-checkout.paddle.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
   if (process.env.NODE_ENV === 'production') {
     res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   }
@@ -648,20 +657,27 @@ app.patch('/api/me/theme', requireAuth, requirePremium, h(async (req: AuthedRequ
   res.json({ ok: true, theme_preset: preset, theme_accent: accent, theme_bg: bg });
 }));
 
-// ---------- Facturación (v1.7): Stripe real con fallback simulado ----------
-// Si STRIPE_SECRET_KEY está configurado, /api/billing/upgrade responde con la
-// URL de Checkout de Stripe (el usuario paga ahí y un webhook activa el plan).
-// Sin Stripe, el flujo simulado de 30 días queda disponible solo en desarrollo
-// (ALLOW_FAKE_BILLING=1) o si el admin lo habilita explícitamente. El endpoint
-// /api/billing/cancel cambia con Stripe: en vez de cancelar inmediatamente,
-// manda al usuario al Billing Portal de Stripe para que él lo haga (y el webhook
-// confirma la degradación a Free al final del período).
+// ---------- Facturación (v1.7): Paddle > Stripe > simulado ----------
+// Paddle soporta vendedores en Uruguay (a diferencia de Stripe), así que es la
+// pasarela preferida cuando PADDLE_API_KEY está definido. Stripe queda como
+// fallback para quien operé desde US/EU con LLC. Sin ninguno, dev local con
+// ALLOW_FAKE_BILLING=1 sigue simulando 30 días.
 app.post('/api/billing/upgrade', requireAuth, h(async (req: AuthedRequest, res) => {
   const tier: BillingPlan = req.body?.plan === 'team' ? 'team' : 'premium';
-  if (stripeEnabled()) {
-    const me = await get<{ email: string | null; name: string | null }>(
-      'SELECT email, name FROM users WHERE id = $1', [req.userId!]);
-    try {
+  const provider = billingProvider();
+  const me = await get<{ email: string | null; name: string | null }>(
+    'SELECT email, name FROM users WHERE id = $1', [req.userId!]);
+  try {
+    if (provider === 'paddle') {
+      const { url } = await createCheckout({
+        userId: req.userId!,
+        plan: tier,
+        customerEmail: me?.email ?? null,
+        appUrl: APP_URL,
+      });
+      return res.json({ mode: 'paddle', url });
+    }
+    if (provider === 'stripe') {
       const { url } = await createCheckoutSession({
         userId: req.userId!,
         plan: tier,
@@ -670,9 +686,9 @@ app.post('/api/billing/upgrade', requireAuth, h(async (req: AuthedRequest, res) 
         appUrl: APP_URL,
       });
       return res.json({ mode: 'stripe', url });
-    } catch (err: any) {
-      return res.status(502).json({ error: err?.message ?? 'No se pudo crear la sesión de pago' });
     }
+  } catch (err: any) {
+    return res.status(502).json({ error: err?.message ?? 'No se pudo crear la sesión de pago' });
   }
   // Modo simulado: respetar la protección en producción del README.
   if (process.env.NODE_ENV === 'production' && process.env.ALLOW_FAKE_BILLING !== '1') {
@@ -689,24 +705,46 @@ app.post('/api/billing/upgrade', requireAuth, h(async (req: AuthedRequest, res) 
 }));
 
 app.post('/api/billing/portal', requireAuth, h(async (req: AuthedRequest, res) => {
-  if (!stripeEnabled()) return res.status(400).json({ error: 'Stripe no configurado' });
-  const c = await get<{ customer_id: string }>('SELECT customer_id FROM stripe_customers WHERE user_id = $1', [req.userId!]);
-  if (!c) return res.status(404).json({ error: 'Aún no tenés un método de pago asociado' });
-  try {
-    const { url } = await createPortalSession(c.customer_id, APP_URL);
-    res.json({ url });
-  } catch (err: any) {
-    res.status(502).json({ error: err?.message ?? 'No se pudo abrir el portal de facturación' });
+  // Paddle: Paddle Billing no expone un portal hosted equivalente al de Stripe;
+  // la cancelación y gestión de método de pago se hacen por API desde la app
+  // (ver /api/billing/cancel) y el cliente puede actualizar su tarjeta desde
+  // el Checkout "update payment method" link que Paddle envía por email. Para
+  // Stripe delegamos al Billing Portal hosted.
+  if (stripeEnabled()) {
+    const c = await get<{ customer_id: string }>('SELECT customer_id FROM stripe_customers WHERE user_id = $1', [req.userId!]);
+    if (!c) return res.status(404).json({ error: 'Aún no tenés un método de pago asociado' });
+    try {
+      const { url } = await createPortalSession(c.customer_id, APP_URL);
+      return res.json({ url });
+    } catch (err: any) {
+      return res.status(502).json({ error: err?.message ?? 'No se pudo abrir el portal de facturación' });
+    }
   }
+  // Paddle: no hay portal hosted — el "portal" es la propia app.
+  res.json({ url: `${APP_URL}/#/account` });
 }));
 
 app.post('/api/billing/cancel', requireAuth, h(async (req: AuthedRequest, res) => {
-  // Con Stripe, el usuario debe cancelar desde el portal (mantiene el Premium
-  // hasta el fin del período que ya pagó); el webhook aplica la degradación a
-  // Free al vencer. Sin Stripe sigue siendo cancelación inmediata local.
-  if (stripeEnabled()) {
+  const provider = billingProvider();
+  if (provider === 'paddle') {
+    // Paddle: cancelamos la suscripción vía API. Paddle lanza luego el webhook
+    // subscription.canceled que dispara la degradación local a Free — esto
+    // preserva el acceso hasta el período ya pagado (mismo modelo que Stripe).
+    const c = await get<{ subscription_id: string | null }>('SELECT subscription_id FROM paddle_customers WHERE user_id = $1', [req.userId!]);
+    if (!c?.subscription_id) {
+      return res.status(404).json({ error: 'No tenés una suscripción activa para cancelar' });
+    }
+    try {
+      await cancelSubscription(c.subscription_id);
+      return res.json({ ok: true, message: 'Suscripción cancelada. Conservás Premium hasta el fin del período ya pagado.' });
+    } catch (err: any) {
+      return res.status(502).json({ error: err?.message ?? 'No se pudo cancelar la suscripción' });
+    }
+  }
+  if (provider === 'stripe') {
     return res.status(409).json({ error: 'Cancelá desde el Portal de Facturación para conservar lo ya pagado', code: 'use_portal' });
   }
+  // Sin pasarela: cancelación local inmediata.
   await run(`UPDATE users SET plan = 'free', premium_until = NULL WHERE id = $1`, [req.userId!]);
   res.json({ plan: 'free', premium_until: null });
 }));
@@ -809,8 +847,124 @@ app.post('/api/billing/webhook', async (req, res) => {
   }
 });
 
+// Webhook de Paddle (api.paddle.com). Mismo truco que con Stripe: el body
+// crudo ya está en req.rawBody gracias al verify() del parser global.
+// Header Paddle-Signature: `ts=NNN;h1=HEX`, firma HMAC-SHA256 sobre
+// `${ts}:${rawBody}`. Eventos relevantes:
+//   - transaction.completed     → pago exitoso, asocia plan hasta billing_period.ends_at
+//   - transaction.payment_failed → dunning + email
+//   - subscription.canceled      → degrada a Free
+//   (cualquier otro evento: ack 200 sin log — sólo renuevas usan este endpoint)
+app.post('/api/billing/webhook/paddle', async (req, res) => {
+  if (!paddleEnabled()) return res.status(404).json({ error: 'Paddle no configurado' });
+  const raw = (req as any).rawBody as Buffer | undefined;
+  const event = verifyPaddleWebhook(raw ?? Buffer.alloc(0), req.headers['paddle-signature'] as string | undefined);
+  if (!event) return res.status(400).json({ error: 'Firma inválida' });
+  try {
+    const d = event.data ?? {};
+    switch (event.event_type) {
+      case 'transaction.completed': {
+        // d tiene: id (txn_), customer_id (ctm_), subscription_id (sub_),
+        // custom_data.user_id (si viajó desde /transactions), details.totals.total,
+        // currency_code, billing_period.starts_at/ends_at.
+        const userId = Number(d.custom_data?.user_id ?? 0);
+        const plan: BillingPlan = d.custom_data?.plan === 'team' ? 'team' : 'premium';
+        const custId = d.customer_id as string | undefined;
+        const subId = d.subscription_id as string | null | undefined;
+        const total = d.details?.totals?.total ?? 0; // integer en la moneda mínima
+        const currency = (d.currency_code ?? 'USD').toUpperCase();
+        const periodStart = d.billing_period?.starts_at as string | null | undefined;
+        const periodEnd = d.billing_period?.ends_at as string | null | undefined;
+        // Si no vino user_id en custom_data, lo resolvemos por ctm_id guardado.
+        let uid = userId;
+        if (!uid && custId) {
+          const r = await get<{ user_id: number }>('SELECT user_id FROM paddle_customers WHERE customer_id = $1', [custId]);
+          uid = r?.user_id ?? 0;
+        }
+        if (uid > 0) {
+          // Registra el pago (idempotente por paddle_transaction_id). Paddle no
+          // tienen invoice PDF hosted como Stripe, pero la transacción tiene un
+          // "invoice" accesible desde su portal si collection_mode=manual. Acá
+          // dejamos el campo null (el usuario consulta sus facturas en su panel).
+          const existing = await get<{ id: number }>('SELECT id FROM payments WHERE paddle_transaction_id = $1', [d.id]);
+          if (!existing) {
+            await insert(
+              `INSERT INTO payments (user_id, plan, amount_cents, currency, days, method, paddle_transaction_id,
+                paddle_subscription_id, status, period_start, period_end)
+               VALUES ($1, $2, $3, $4, $5, 'paddle', $6, $7, 'paid', $8, $9)`,
+              [uid, plan, total, currency, PREMIUM_DAYS, d.id, subId ?? null,
+               periodStart ?? null, periodEnd ?? null]);
+          }
+          // Persistimos la asociación customer_id + sub_id + plan para próximas
+          // renovaciones (el primer webhook puede llegar sin sub_id si la
+          // transacción todavía no tiene subscription; el siguiente ya lo trae).
+          if (custId) {
+            await run(`INSERT INTO paddle_customers (user_id, customer_id, subscription_id, plan)
+                       VALUES ($1, $2, $3, $4)
+                       ON CONFLICT (user_id) DO UPDATE SET
+                         customer_id = EXCLUDED.customer_id,
+                         subscription_id = COALESCE(EXCLUDED.subscription_id, paddle_customers.subscription_id),
+                         plan = COALESCE(EXCLUDED.plan, paddle_customers.plan)`,
+              [uid, custId, subId ?? null, plan]);
+          }
+          // Activa el plan hasta el fin del período cubierto. Si Paddle no manda
+          // billing_period (caso PostalException o fallo), extendemos 30 días
+          // por defecto para no dejar al usuario sin acceso tras un pago válido.
+          const until = periodEnd ?? new Date(Date.now() + PREMIUM_DAYS * 24 * 60 * 60 * 1000).toISOString();
+          await run(`UPDATE users SET plan = $1, premium_until = $2 WHERE id = $3`, [plan, until, uid]);
+        }
+        break;
+      }
+      case 'transaction.payment_failed': {
+        const custId = d.customer_id as string | undefined;
+        const row = await get<{ user_id: number; email: string | null; username: string }>(
+          `SELECT users.id AS user_id, users.email, users.username FROM users
+           JOIN paddle_customers pc ON pc.user_id = users.id WHERE pc.customer_id = $1`, [custId ?? '']);
+        if (row?.email) {
+          await sendMail(row.email, 'Problema con tu pago de QuarryHQ',
+            `<p>Hola @${row.username},</p>
+             <p>No pudimos cobrar tu suscripción a QuarryHQ. Paddle va a reintentar en los próximos días; si querés
+             actualizar tu método de pago, volvé a entrar y activá tu plan nuevamente.</p>
+             <p class="cta"><a href="${APP_URL}/#/account">Gestionar suscripción</a></p>`);
+        }
+        if (row) {
+          const existing = await get<{ id: number }>('SELECT id FROM payments WHERE paddle_transaction_id = $1', [d.id]);
+          if (!existing) {
+            await insert(
+              `INSERT INTO payments (user_id, plan, amount_cents, currency, days, method, paddle_transaction_id,
+                paddle_subscription_id, status, period_start, period_end)
+               VALUES ($1, 'premium', $2, $3, $4, 'paddle', $5, $6, 'past_due', $7, $8)`,
+              [row.user_id, d.details?.totals?.total ?? 0, (d.currency_code ?? 'USD').toUpperCase(), PREMIUM_DAYS, d.id, d.subscription_id ?? null,
+               d.billing_period?.starts_at ?? null, d.billing_period?.ends_at ?? null]);
+          }
+        }
+        break;
+      }
+      case 'subscription.canceled': {
+        // La suscripción fue cancelada — por el usuario (via /billing/cancel) o
+        // por Paddle tras agotar el dunning. Marcamos el plan como Free pero
+        // dejamos premium_until intacto: si quedó período pagado, el usuario
+        // sigue con Premium hasta esa fecha (userPlan() degrada automáticamente
+        // al vencer).
+        const subId = d.id as string | undefined;
+        await run(`UPDATE users SET plan = 'free' WHERE id IN (
+                     SELECT user_id FROM paddle_customers WHERE subscription_id = $1)`, [subId]);
+        break;
+      }
+      default:
+        // Eventos no relevantes (subscription.updated, transaction.created,
+        // transaction.ready, transaction.billed): ack sin acción.
+        break;
+    }
+    res.json({ received: true });
+  } catch (err) {
+    console.error('[paddle webhook] error en', event.event_type, err);
+    res.status(500).json({ error: 'internal' });
+  }
+});
+
 // Listado de facturas del usuario (panel de cuenta): junta los pagos simulados
-// antiguos y los cobros reales de Stripe en una sola vista cronológica.
+// antiguos y los cobros reales de Stripe/Paddle en una sola vista cronológica.
 app.get('/api/billing/invoices', requireAuth, h(async (req: AuthedRequest, res) => {
   const rows = await all(
     `SELECT id, plan, amount_cents, currency, days, method, invoice_url, hosted_invoice_url,

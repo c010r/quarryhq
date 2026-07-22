@@ -404,6 +404,21 @@ export async function initSchema() {
     -- Marca de renovación para distinguir el cobro inicial de las subsiguientes.
     ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT;
 
+    -- ---------- v1.7: Paddle (pasarela principal en UY) ----------
+    -- Misma idea que stripe_customers pero para Paddle Billing. customer_id
+    -- tiene prefijo ctm_, subscription_id sub_. Persistimos el sub_id acá en
+    -- vez de users.* para no tener columnas paralelas por cada pasarela nueva.
+    CREATE TABLE IF NOT EXISTS paddle_customers (
+      user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      customer_id TEXT NOT NULL UNIQUE,
+      subscription_id TEXT,
+      plan TEXT,
+      created_at TEXT NOT NULL DEFAULT ${NOW_UTC}
+    );
+    ALTER TABLE payments ADD COLUMN IF NOT EXISTS paddle_transaction_id TEXT;
+    ALTER TABLE payments ADD COLUMN IF NOT EXISTS paddle_subscription_id TEXT;
+    CREATE INDEX IF NOT EXISTS payments_paddle_txn_idx ON payments(paddle_transaction_id);
+
     -- ---------- v1.7: Búsqueda full-text ----------
     -- to_tsvector('simple', …) en vez de 'spanish' para soportar correctamente
     -- @-syntax (websearch_to_tsquery). Las palabras acentuadas funcionan igual
