@@ -27,7 +27,7 @@ export function planPriceId(plan: BillingPlan): string {
 // Sandbox y producción usan hosts distintos. Paddle distingue con el prefijo
 // de la API key (sk_test_ vs sk_live_) pero confiamos en PADDLE_ENV para
 // simplificar; el usuario debe setearlo coherente con la key que está usando.
-const API_BASE = ENV === 'sandbox' ? 'https://api-sandboxapi.paddle.com' : 'https://api.paddle.com';
+const API_BASE = ENV === 'sandbox' ? 'https://sandbox-api.paddle.com' : 'https://api.paddle.com';
 
 export type BillingPlan = 'premium' | 'team';
 
