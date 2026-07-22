@@ -115,6 +115,7 @@ function Login({ onAuth }: { onAuth: (user: User) => void }) {
   const [mode, setMode] = useState<'login' | 'register' | 'forgot'>('login');
   const [identifier, setIdentifier] = useState(''); // email o usuario según el modo
   const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState(''); // solo registro
   const [inviteCode, setInviteCode] = useState('');
   const [error, setError] = useState('');
   const [info, setInfo] = useState(location.hash.includes('verificado') && !location.hash.includes('fallida')
@@ -128,6 +129,7 @@ function Login({ onAuth }: { onAuth: (user: User) => void }) {
     setMode(next);
     setError('');
     setInfo('');
+    setConfirm('');
   }
 
   async function submit(e: React.FormEvent) {
@@ -142,12 +144,34 @@ function Login({ onAuth }: { onAuth: (user: User) => void }) {
       }
       const body: Record<string, string> = { password };
       if (mode === 'register') {
+        // Validar cliente-side que las contraseñas coincidan antes de pegarle al
+        // server. Evita el caso típico de dos inputs parecidos pero distintos.
+        if (password !== confirm) {
+          setError('Las contraseñas no coinciden');
+          return;
+        }
         body.email = identifier;
         if (inviteCode.trim()) body.invite_code = inviteCode.trim();
       } else {
         body.username = identifier;
       }
-      const data = await post<{ token: string; user: User }>(`/api/${mode}`, body);
+      if (mode === 'register') {
+        // No autologueamos tras el registro: el server igual crea una sesión,
+        // pero no la usamos. Informamos al usuario que verifique su correo y
+        // volvemos al modo login con el email prepoblado para que entre si ya
+        // verificó o puede hacerlo más tarde (la cuenta ya existe y debe
+        // poder iniciar sesión aunque el correo no esté verificado, por eso
+        // /api/login no exige email_verified).
+        await post(`/api/register`, body);
+        setInfo(`✓ Cuenta creada. Te enviamos un correo de verificación a ${identifier}. ` +
+          'Inicia sesión con tu email y contraseña.');
+        setPassword('');
+        setConfirm('');
+        setMode('login');
+        setInviteCode('');
+        return;
+      }
+      const data = await post<{ token: string; user: User }>(`/api/login`, body);
       setToken(data.token);
       onAuth(data.user);
     } catch (err: any) {
@@ -175,6 +199,11 @@ function Login({ onAuth }: { onAuth: (user: User) => void }) {
           <input className={inputBase} type="password" value={password}
             placeholder={mode === 'register' ? 'Contraseña (mín. 8 caracteres)' : 'Contraseña'}
             onChange={(e) => setPassword(e.target.value)} />
+        )}
+        {mode === 'register' && (
+          <input className={inputBase} type="password" value={confirm}
+            placeholder="Repite la contraseña"
+            onChange={(e) => setConfirm(e.target.value)} />
         )}
         {mode === 'register' && (
           <input className={inputBase} placeholder="Código de invitación (opcional)"
