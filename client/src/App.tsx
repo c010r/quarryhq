@@ -728,8 +728,15 @@ export default function App() {
   }, []);
 
   // Tras autenticarse se refresca el perfil completo (la respuesta del login
-  // no trae is_admin ni la suscripción)
-  const onAuth = (u: User) => { setUser(u); refreshUser(); };
+  // no trae is_admin ni la suscripción). Además limpiamos el hash si apunta a
+  // un recurso concreto (board/note/chat) que podría ser de otra sesión — así
+  // evitamos que un usuario nuevo vea "no tenés acceso" al heredar la URL del
+  // anterior.
+  const onAuth = (u: User) => {
+    const h = location.hash;
+    if (/^#\/(board|notes|chat)\/\d+/.test(h) && h !== '#/') navigate('');
+    setUser(u); refreshUser();
+  };
 
   // Estética Premium: se re-aplica cada vez que cambia el usuario (login,
   // logout, o tras guardar un cambio de tema en AppearanceModal)

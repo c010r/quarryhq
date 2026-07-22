@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { get, post, del, onWsEvent, notifyPlanBlock, sendWs } from '../api';
+import { get, post, del, onWsEvent, notifyPlanBlock, sendWs, ApiError } from '../api';
 import type { Board, Card, List } from '../types';
 import { LABEL_COLORS } from '../types';
 import CardModal from './CardModal';
@@ -89,7 +89,7 @@ export default function BoardView({ boardId, initialCardId, isPremium, currentUs
   currentUserId: number;
 }) {
   const [board, setBoard] = useState<Board | null>(null);
-  const [loadError, setLoadError] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [lists, setLists] = useState<List[]>([]);
   const [addingCardTo, setAddingCardTo] = useState<number | null>(null);
   const [addingList, setAddingList] = useState(false);
@@ -104,12 +104,18 @@ export default function BoardView({ boardId, initialCardId, isPremium, currentUs
 
   const load = useCallback(async () => {
     try {
-      setLoadError(false);
+      setLoadError(null);
       const data = await get<{ board: Board; lists: List[] }>(`/api/boards/${boardId}`);
       setBoard(data.board);
       setLists(data.lists);
-    } catch {
-      setLoadError(true);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 403) {
+        setLoadError('No tenés acceso a este tablero.');
+      } else if (err instanceof ApiError && err.status === 404) {
+        setLoadError('El tablero no existe o fue eliminado.');
+      } else {
+        setLoadError('No se pudo cargar el tablero. Puede que la conexión haya fallado.');
+      }
       setBoard(null);
     }
   }, [boardId]);
@@ -156,7 +162,7 @@ export default function BoardView({ boardId, initialCardId, isPremium, currentUs
     if (loadError) return (
       <div className={emptyState}>
         <span className="text-3xl opacity-60">{GLYPH.board}</span>
-        <p>No se pudo cargar el tablero. Puede que la conexión haya fallado.</p>
+        <p>{loadError}</p>
         <button className={btnSmall} onClick={load}>Reintentar</button>
       </div>
     );
