@@ -15,8 +15,8 @@ const API = 'https://api.mercadopago.com';
 
 // Precios de prueba para MercadoPago.
 const PRICES: Record<BillingPlan, { amount: number; currency: string }> = {
-  premium: { amount: 0.99, currency: 'USD' },
-  team: { amount: 1.99, currency: 'USD' },
+  premium: { amount: 15, currency: 'USD' },
+  team: { amount: 25, currency: 'USD' },
 };
 
 export type BillingPlan = 'premium' | 'team';
