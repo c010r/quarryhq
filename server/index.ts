@@ -7,10 +7,22 @@ import { all, get, run, insert, transaction, initSchema, seedIfEmpty } from './d
 import { APP_URL, inviteHtml, resetPasswordHtml, sendMail, verifyEmailHtml } from './mailer.ts';
 import { stripeEnabled, createCheckoutSession, createPortalSession, verifyWebhookSignature, type BillingPlan } from './stripe.ts';
 import { paddleEnabled, createCheckout, cancelSubscription, verifyWebhookSignature as verifyPaddleWebhook } from './paddle.ts';
-// BillingPlan se exporta tambien desde paddle.ts, pero Stripe ya lo define con
-// el mismo nombre — reusamos el de Stripe para ambos.
-type BillingProvider = 'paddle' | 'stripe' | 'simulado';
-function billingProvider(): BillingProvider | null {
+import { mpEnabled, createCheckout as mpCheckout, cancelSubscription as mpCancel, getPreapproval, BillingPlan as MPBillingPlan } from './mercadopago.ts';
+// BillingPlan es el mismo tipo en los tres módulos; lo importamos de Stripe.
+type BillingProvider = 'mercadopago' | 'paddle' | 'stripe' | 'simulado';
+
+// Códigos de país/idioma LATAM del header Accept-Language. Si el usuario
+// viene de un navegador configurado en español/portugués de LATAM, preferimos
+// MercadoPago (checkout local, cuotas, medios de pago regionales). Para todo
+// lo demás, Paddle (si está configurado) o Stripe (si está configurado).
+const LATAM_LOCALES = /-(AR|UY|BR|CL|CO|PE|MX|EC|PY|BO|PA|CR|DO|GT|HN|NI|SV|VE)\b/;
+
+function billingProvider(req?: express.Request): BillingProvider | null {
+  // Si MercadoPago está configurado Y el cliente viene de LATAM, usamos MP.
+  if (mpEnabled()) {
+    const lang = (req?.headers?.['accept-language'] as string) ?? '';
+    if (LATAM_LOCALES.test(lang)) return 'mercadopago';
+  }
   if (paddleEnabled()) return 'paddle';
   if (stripeEnabled()) return 'stripe';
   return null;
@@ -25,7 +37,7 @@ app.use((_req, res, next) => {
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   res.setHeader('Content-Security-Policy',
-    "default-src 'self'; script-src 'self' https://accounts.google.com/gsi/client https://apis.google.com https://cdn.paddle.com https://checkout.paddle.com https://sandbox-checkout.paddle.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://oauth2.googleapis.com https://api.paddle.com https://sandbox-api.paddle.com https://checkout.paddle.com https://sandbox-checkout.paddle.com; frame-src https://accounts.google.com https://docs.google.com https://drive.google.com https://checkout.paddle.com https://sandbox-checkout.paddle.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
+    "default-src 'self'; script-src 'self' https://accounts.google.com/gsi/client https://apis.google.com https://cdn.paddle.com https://checkout.paddle.com https://sandbox-checkout.paddle.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://oauth2.googleapis.com https://api.paddle.com https://sandbox-api.paddle.com https://checkout.paddle.com https://sandbox-checkout.paddle.com https://api.mercadopago.com https://www.mercadopago.com; frame-src https://accounts.google.com https://docs.google.com https://drive.google.com https://checkout.paddle.com https://sandbox-checkout.paddle.com https://www.mercadopago.com https://www.mercadopago.com.ar; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
   if (process.env.NODE_ENV === 'production') {
     res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   }
@@ -691,10 +703,24 @@ app.patch('/api/me/theme', requireAuth, requirePremium, h(async (req: AuthedRequ
 // ALLOW_FAKE_BILLING=1 sigue simulando 30 días.
 app.post('/api/billing/upgrade', requireAuth, h(async (req: AuthedRequest, res) => {
   const tier: BillingPlan = req.body?.plan === 'team' ? 'team' : 'premium';
-  const provider = billingProvider();
+  const provider = billingProvider(req);
   const me = await get<{ email: string | null; name: string | null }>(
     'SELECT email, name FROM users WHERE id = $1', [req.userId!]);
   try {
+    if (provider === 'mercadopago') {
+      if (!me?.email) return res.status(400).json({ error: 'Necesitás tener un email configurado para usar MercadoPago' });
+      const { url, preapprovalId } = await mpCheckout({
+        userId: req.userId!,
+        plan: tier,
+        payerEmail: me.email,
+        appUrl: APP_URL,
+      });
+      // Persistimos el preapproval_id para poder cancelar y para el webhook.
+      await run(`INSERT INTO mercadopago_subs (user_id, preapproval_id, plan) VALUES ($1, $2, $3)
+                 ON CONFLICT (user_id) DO UPDATE SET preapproval_id = EXCLUDED.preapproval_id, plan = EXCLUDED.plan`,
+        [req.userId!, preapprovalId, tier]);
+      return res.json({ mode: 'mercadopago', url });
+    }
     if (provider === 'paddle') {
       const { url } = await createCheckout({
         userId: req.userId!,
@@ -752,7 +778,17 @@ app.post('/api/billing/portal', requireAuth, h(async (req: AuthedRequest, res) =
 }));
 
 app.post('/api/billing/cancel', requireAuth, h(async (req: AuthedRequest, res) => {
-  const provider = billingProvider();
+  const provider = billingProvider(req);
+  if (provider === 'mercadopago') {
+    const s = await get<{ preapproval_id: string }>('SELECT preapproval_id FROM mercadopago_subs WHERE user_id = $1', [req.userId!]);
+    if (!s?.preapproval_id) return res.status(404).json({ error: 'No tenés una suscripción activa para cancelar' });
+    try {
+      await mpCancel(s.preapproval_id);
+      return res.json({ ok: true, message: 'Suscripción cancelada. Conservás Premium hasta el fin del período ya pagado.' });
+    } catch (err: any) {
+      return res.status(502).json({ error: err?.message ?? 'No se pudo cancelar la suscripción' });
+    }
+  }
   if (provider === 'paddle') {
     // Paddle: cancelamos la suscripción vía API. Paddle lanza luego el webhook
     // subscription.canceled que dispara la degradación local a Free — esto
@@ -986,6 +1022,51 @@ app.post('/api/billing/webhook/paddle', async (req, res) => {
     res.json({ received: true });
   } catch (err) {
     console.error('[paddle webhook] error en', event.event_type, err);
+    res.status(500).json({ error: 'internal' });
+  }
+});
+
+// Webhook de MercadoPago (IPN). MP envía POST con body tipo
+// {"id": 123456, "topic": "subscription_authorized"}. No incluye firma por
+// defecto; llamamos GET /preapproval/{id} para obtener los datos auténticos y
+// el external_reference (nuestro user_id). Topics relevantes:
+//   subscription_authorized → activa el plan
+//   subscription_cancelled   → degrada a Free
+app.post('/api/billing/webhook/mp', async (req, res) => {
+  if (!mpEnabled()) return res.status(404).json({ error: 'MercadoPago no configurado' });
+  const raw = (req as any).rawBody as Buffer | undefined;
+  const event = verifyWebhookSignature(raw ?? Buffer.alloc(0), req.headers['x-signature'] as string | undefined);
+  if (!event) return res.status(400).json({ error: 'Formato de IPN inválido' });
+  try {
+    switch (event.topic) {
+      case 'subscription_authorized': {
+        const pa = await getPreapproval(event.id);
+        const userId = Number(pa.external_reference ?? 0);
+        const plan: BillingPlan = pa.reason?.includes('Equipos') ? 'team' : 'premium';
+        if (userId > 0 && pa.status === 'authorized') {
+          const existing = await get<{ id: number }>('SELECT id FROM payments WHERE mp_preapproval_id = $1', [String(pa.id)]);
+          if (!existing) {
+            const amountCents = Math.round((pa.auto_recurring?.transaction_amount ?? 0) * 100);
+            await insert(
+              `INSERT INTO payments (user_id, plan, amount_cents, currency, days, method, mp_preapproval_id, status)
+               VALUES ($1, $2, $3, $4, $5, 'mercadopago', $6, 'paid')`,
+              [userId, plan, amountCents, pa.auto_recurring?.currency_id ?? 'USD', PREMIUM_DAYS, String(pa.id)]);
+          }
+          const until = new Date(Date.now() + PREMIUM_DAYS * 24 * 60 * 60 * 1000).toISOString();
+          await run('UPDATE users SET plan = $1, premium_until = $2 WHERE id = $3', [plan, until, userId]);
+          await run('UPDATE mercadopago_subs SET plan = $1 WHERE user_id = $2', [plan, userId]);
+        }
+        break;
+      }
+      case 'subscription_cancelled': {
+        await run(`UPDATE users SET plan = 'free' WHERE id IN (
+                     SELECT user_id FROM mercadopago_subs WHERE preapproval_id = $1)`, [String(event.id)]);
+        break;
+      }
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[mp webhook] error en', event.topic, err);
     res.status(500).json({ error: 'internal' });
   }
 });

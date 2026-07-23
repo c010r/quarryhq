@@ -104,14 +104,14 @@ export default function UpgradeModal({ plan, message, onClose, onChanged }: {
 
   const upgrade = (tier: 'premium' | 'team') => act(async () => {
     const data = await post<{ mode?: string; url?: string; plan?: string; premium_until?: string }>('/api/billing/upgrade', { plan: tier });
-    // Si el servidor usa Stripe, responde {mode:'stripe', url}. Redirigimos al
-    // Checkout hosted; el webhook nos activará el plan al confirmarse el pago.
-    if (data.mode === 'stripe' && data.url) {
+    // Si el servidor devuelve url (stripe, paddle, mercadopago), redirigimos al
+    // checkout hosted; el webhook activará el plan al confirmarse el pago.
+    if (data.url) {
       window.location.href = data.url;
       return;
     }
-    // Sin Stripe (modo simulado): la respuesta ya trae plan+premium_until, el
-    // reload() del wrapper actualiza la UI. Nada más que hacer acá.
+    // Modo simulado: la respuesta ya trae plan+premium_until, el reload() del
+    // wrapper actualiza la UI.
   });
 
   const openPortal = () => act(async () => {

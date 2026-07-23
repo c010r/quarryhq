@@ -419,6 +419,16 @@ export async function initSchema() {
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS paddle_subscription_id TEXT;
     CREATE INDEX IF NOT EXISTS payments_paddle_txn_idx ON payments(paddle_transaction_id);
 
+    -- ---------- MercadoPago (v1.7.x) ----------
+    CREATE TABLE IF NOT EXISTS mercadopago_subs (
+      user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      preapproval_id TEXT NOT NULL,
+      plan TEXT,
+      created_at TEXT NOT NULL DEFAULT ${NOW_UTC}
+    );
+    ALTER TABLE payments ADD COLUMN IF NOT EXISTS mp_preapproval_id TEXT;
+    CREATE INDEX IF NOT EXISTS payments_mp_id_idx ON payments(mp_preapproval_id);
+
     -- ---------- v1.7: Búsqueda full-text ----------
     -- to_tsvector('simple', …) en vez de 'spanish' para soportar correctamente
     -- @-syntax (websearch_to_tsquery). Las palabras acentuadas funcionan igual

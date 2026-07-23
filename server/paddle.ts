@@ -100,13 +100,13 @@ export async function createCheckout(opts: {
     items: [{ quantity: 1, price_id: price }],
     currency_code: 'USD',
     collection_mode: 'automatic',
-    // Las URLs de redireccion van en el checkout del producto en el dashboard
-    // de Paddle; acá igual pasamos la URL del checkoutOverride para volver al
-    // hash route #/billing/success. Paddle ignora dominios no aprobados, así
-    // que el dominio debe aprobarse en Paddle > Checkout settings.
-    checkout: { url: `${opts.appUrl}/#/billing/success` },
     custom_data: { user_id: String(opts.userId), plan: opts.plan },
   };
+  // El checkout url override es opcional; sin él, Paddle usa la Default
+  // Payment Link configurada en el dashboard (https://sandbox-vendors.paddle.com/checkout).
+  // Pasarlo acá evita que falle si no hay default, pero debe ser de un dominio
+  // aprobado en Paddle > Checkout settings.
+  body.checkout = { url: `${opts.appUrl}/#/billing/success` };
   if (customerId) body.customer_id = customerId;
   const txn = await paddleRequest<any>('POST', '/transactions', body);
   const url = txn.data?.checkout?.url;
