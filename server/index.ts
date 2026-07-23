@@ -20,6 +20,8 @@ function billingProvider(req?: express.Request): BillingProvider | null {
   if (mpEnabled()) {
     const lang = (req?.headers?.['accept-language'] as string) ?? '';
     if (LATAM_LOCALES.test(lang) && !NOT_LATAM_LOCALES.test(lang)) return 'mercadopago';
+    // Si no hay otro provider configurado, MP es el default (el único activo).
+    if (!paddleEnabled() && !stripeEnabled()) return 'mercadopago';
   }
   if (paddleEnabled()) return 'paddle';
   if (stripeEnabled()) return 'stripe';
