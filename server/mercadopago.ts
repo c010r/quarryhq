@@ -13,10 +13,10 @@ export const mpEnabled = () => ACCESS_TOKEN.length > 0;
 
 const API = 'https://api.mercadopago.com';
 
-// MercadoPago Uruguay solo soporta UYU para suscripciones recurrentes.
+// Precios de prueba para MercadoPago.
 const PRICES: Record<BillingPlan, { amount: number; currency: string }> = {
-  premium: { amount: 600, currency: 'UYU' },
-  team: { amount: 1000, currency: 'UYU' },
+  premium: { amount: 0.99, currency: 'USD' },
+  team: { amount: 1.99, currency: 'USD' },
 };
 
 export type BillingPlan = 'premium' | 'team';
