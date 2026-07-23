@@ -14,9 +14,10 @@ export const mpEnabled = () => ACCESS_TOKEN.length > 0;
 const API = 'https://api.mercadopago.com';
 
 // Precios de prueba para MercadoPago.
+// MercadoPago Uruguay solo acepta UYU para preapproval.
 const PRICES: Record<BillingPlan, { amount: number; currency: string }> = {
-  premium: { amount: 15, currency: 'USD' },
-  team: { amount: 25, currency: 'USD' },
+  premium: { amount: 400, currency: 'UYU' },
+  team: { amount: 800, currency: 'UYU' },
 };
 
 export type BillingPlan = 'premium' | 'team';
