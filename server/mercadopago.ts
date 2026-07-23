@@ -13,13 +13,10 @@ export const mpEnabled = () => ACCESS_TOKEN.length > 0;
 
 const API = 'https://api.mercadopago.com';
 
-// Precios en USD. MP permite cualquier moneda soportada; usamos USD para
-// consistencia con Paddle/Stripe. La UI de MP se adapta al país del pagador.
-// MercadoPago requiere un monto mínimo de 15 USD por transacción recurrente
-// (varía según país). Usamos 15 para Individual y 25 para Equipos.
+// MercadoPago Uruguay solo soporta UYU para suscripciones recurrentes.
 const PRICES: Record<BillingPlan, { amount: number; currency: string }> = {
-  premium: { amount: 15, currency: 'USD' },
-  team: { amount: 25, currency: 'USD' },
+  premium: { amount: 600, currency: 'UYU' },
+  team: { amount: 1000, currency: 'UYU' },
 };
 
 export type BillingPlan = 'premium' | 'team';
