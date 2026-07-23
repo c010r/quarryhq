@@ -15,9 +15,11 @@ const API = 'https://api.mercadopago.com';
 
 // Precios en USD. MP permite cualquier moneda soportada; usamos USD para
 // consistencia con Paddle/Stripe. La UI de MP se adapta al país del pagador.
+// MercadoPago requiere un monto mínimo de 15 USD por transacción recurrente
+// (varía según país). Usamos 15 para Individual y 25 para Equipos.
 const PRICES: Record<BillingPlan, { amount: number; currency: string }> = {
-  premium: { amount: 9.99, currency: 'USD' },
-  team: { amount: 19.99, currency: 'USD' },
+  premium: { amount: 15, currency: 'USD' },
+  team: { amount: 25, currency: 'USD' },
 };
 
 export type BillingPlan = 'premium' | 'team';
