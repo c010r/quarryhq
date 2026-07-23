@@ -11,16 +11,25 @@ import { mpEnabled, createCheckout as mpCheckout, cancelSubscription as mpCancel
 // BillingPlan es el mismo tipo en los tres módulos; lo importamos de Stripe.
 type BillingProvider = 'mercadopago' | 'paddle' | 'stripe' | 'simulado';
 
-// Detección LATAM: cualquier locale español o portugués activa MP, excepto
-// España (es-ES). La gran mayoría de hispanohablantes están en LATAM.
-const LATAM_LOCALES = /-(AR|UY|BR|CL|CO|PE|MX|EC|PY|BO|PA|CR|DO|GT|HN|NI|SV|VE)\b|^es\b|^pt\b/;
-const NOT_LATAM_LOCALES = /-(ES|PT)\b/;
+// Geolocalización vía Cloudflare (CF-IPCountry). Si no está CF, caemos al
+// header Accept-Language como fallback. Países LATAM donde MP está disponible.
+const MP_COUNTRIES = new Set(['AR','UY','BR','CL','CO','PE','MX','EC','PY','BO','PA','CR','DO','GT','HN','NI','SV','VE']);
+
+function isLatamClient(req?: express.Request): boolean {
+  const cc = ((req?.headers?.['cf-ipcountry'] as string) ?? '').toUpperCase();
+  if (cc && MP_COUNTRIES.has(cc)) return true;
+  // Fallback: si no está el header CF, deducimos por locale.
+  if (!cc) {
+    const lang = (req?.headers?.['accept-language'] as string) ?? '';
+    return /-(AR|UY|BR|CL|CO|PE|MX|EC|PY|BO|PA|CR|DO|GT|HN|NI|SV|VE)\b|^es\b|^pt\b/.test(lang);
+  }
+  return false;
+}
 
 function billingProvider(req?: express.Request): BillingProvider | null {
   if (mpEnabled()) {
-    const lang = (req?.headers?.['accept-language'] as string) ?? '';
-    if (LATAM_LOCALES.test(lang) && !NOT_LATAM_LOCALES.test(lang)) return 'mercadopago';
-    // Si no hay otro provider configurado, MP es el default (el único activo).
+    if (isLatamClient(req)) return 'mercadopago';
+    // Si MP es el único provider, lo usamos como fallback global.
     if (!paddleEnabled() && !stripeEnabled()) return 'mercadopago';
   }
   if (paddleEnabled()) return 'paddle';
