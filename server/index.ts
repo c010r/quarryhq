@@ -11,17 +11,15 @@ import { mpEnabled, createCheckout as mpCheckout, cancelSubscription as mpCancel
 // BillingPlan es el mismo tipo en los tres módulos; lo importamos de Stripe.
 type BillingProvider = 'mercadopago' | 'paddle' | 'stripe' | 'simulado';
 
-// Códigos de país/idioma LATAM del header Accept-Language. Si el usuario
-// viene de un navegador configurado en español/portugués de LATAM, preferimos
-// MercadoPago (checkout local, cuotas, medios de pago regionales). Para todo
-// lo demás, Paddle (si está configurado) o Stripe (si está configurado).
-const LATAM_LOCALES = /-(AR|UY|BR|CL|CO|PE|MX|EC|PY|BO|PA|CR|DO|GT|HN|NI|SV|VE)\b/;
+// Detección LATAM: cualquier locale español o portugués activa MP, excepto
+// España (es-ES). La gran mayoría de hispanohablantes están en LATAM.
+const LATAM_LOCALES = /-(AR|UY|BR|CL|CO|PE|MX|EC|PY|BO|PA|CR|DO|GT|HN|NI|SV|VE)\b|^es\b|^pt\b/;
+const NOT_LATAM_LOCALES = /-(ES|PT)\b/;
 
 function billingProvider(req?: express.Request): BillingProvider | null {
-  // Si MercadoPago está configurado Y el cliente viene de LATAM, usamos MP.
   if (mpEnabled()) {
     const lang = (req?.headers?.['accept-language'] as string) ?? '';
-    if (LATAM_LOCALES.test(lang)) return 'mercadopago';
+    if (LATAM_LOCALES.test(lang) && !NOT_LATAM_LOCALES.test(lang)) return 'mercadopago';
   }
   if (paddleEnabled()) return 'paddle';
   if (stripeEnabled()) return 'stripe';
