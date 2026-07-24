@@ -49,6 +49,8 @@ async function mpGet<T = any>(path: string): Promise<T> {
   return data as T;
 }
 
+export { mpGet };
+
 async function mpPut<T = any>(path: string, body: Record<string, unknown>): Promise<T> {
   const res = await fetch(`${API}${path}`, {
     method: 'PUT',

@@ -7,7 +7,7 @@ import { all, get, run, insert, transaction, initSchema, seedIfEmpty } from './d
 import { APP_URL, inviteHtml, resetPasswordHtml, sendMail, verifyEmailHtml } from './mailer.ts';
 import { stripeEnabled, createCheckoutSession, createPortalSession, verifyWebhookSignature, type BillingPlan } from './stripe.ts';
 import { paddleEnabled, createCheckout, cancelSubscription, verifyWebhookSignature as verifyPaddleWebhook } from './paddle.ts';
-import { mpEnabled, createCheckout as mpCheckout, cancelSubscription as mpCancel, getPreapproval, BillingPlan as MPBillingPlan } from './mercadopago.ts';
+import { mpEnabled, createCheckout as mpCheckout, cancelSubscription as mpCancel, getPreapproval, mpGet, BillingPlan as MPBillingPlan } from './mercadopago.ts';
 // BillingPlan es el mismo tipo en los tres módulos; lo importamos de Stripe.
 type BillingProvider = 'mercadopago' | 'paddle' | 'stripe' | 'simulado';
 
@@ -1051,6 +1051,39 @@ app.post('/api/billing/webhook/mp', async (req, res) => {
   if (!event) return res.status(400).json({ error: 'Formato de IPN inválido' });
   try {
     switch (event.topic) {
+      case 'payment': {
+        // MP puede mandar payment en vez de subscription_authorized si solo
+        // se marcó "payments" en la config IPN. Buscamos el pago en MP y si
+        // está vinculado a un preapproval, activamos el plan.
+        const pay = await mpGet(`/v1/payments/${event.id}`) as any;
+        if (pay?.status === 'approved' && pay?.external_reference) {
+          const userId = Number(pay.external_reference);
+          if (userId > 0) {
+            const paId = pay.order?.id ?? pay.metadata?.preapproval_id ?? '';
+            const amountCents = Math.round((pay.transaction_amount ?? 0) * 100);
+            const existing = await get<{ id: number }>('SELECT id FROM payments WHERE mp_preapproval_id = $1', [String(paId)]);
+            if (!existing && userId > 0) {
+              const plan: BillingPlan = pay.description?.includes('Equipos') ? 'team' : 'premium';
+              await insert(
+                `INSERT INTO payments (user_id, plan, amount_cents, currency, days, method, mp_preapproval_id, status)
+                 VALUES ($1, $2, $3, $4, $5, 'mercadopago', $6, 'paid')`,
+                [userId, plan, amountCents, pay.currency_id ?? 'UYU', PREMIUM_DAYS, String(paId)]);
+              const until = new Date(Date.now() + PREMIUM_DAYS * 24 * 60 * 60 * 1000).toISOString();
+              await run('UPDATE users SET plan = $1, premium_until = $2 WHERE id = $3', [plan, until, userId]);
+              const u = await get<{ email: string | null; username: string }>('SELECT email, username FROM users WHERE id = $1', [userId]);
+              if (u?.email) {
+                const planLabel = plan === 'team' ? 'Equipos' : 'Individual';
+                sendMail(u.email, `Tu suscripción ${planLabel} en QuarryHQ está activa`,
+                  `<p>Hola @${u.username},</p>
+                   <p>Tu suscripción <strong>${planLabel}</strong> en QuarryHQ está activa por ${PREMIUM_DAYS} días. ¡Gracias!</p>
+                   <p><a href="${APP_URL}">Ir a QuarryHQ</a></p>`)
+                  .catch((err: unknown) => console.error('Error mail pago:', err));
+              }
+            }
+          }
+        }
+        break;
+      }
       case 'subscription_authorized': {
         const pa = await getPreapproval(event.id);
         const userId = Number(pa.external_reference ?? 0);
