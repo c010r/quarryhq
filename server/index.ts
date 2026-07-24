@@ -7,7 +7,7 @@ import { all, get, run, insert, transaction, initSchema, seedIfEmpty } from './d
 import { APP_URL, inviteHtml, resetPasswordHtml, sendMail, verifyEmailHtml } from './mailer.ts';
 import { stripeEnabled, createCheckoutSession, createPortalSession, verifyWebhookSignature, type BillingPlan } from './stripe.ts';
 import { paddleEnabled, createCheckout, cancelSubscription, verifyWebhookSignature as verifyPaddleWebhook } from './paddle.ts';
-import { mpEnabled, createCheckout as mpCheckout, cancelSubscription as mpCancel, getPreapproval, mpGet, BillingPlan as MPBillingPlan } from './mercadopago.ts';
+import { mpEnabled, createCheckout as mpCheckout, cancelSubscription as mpCancel, getPreapproval, mpGet, BillingPlan as MPBillingPlan, verifyWebhookSignature as mpVerifyWebhook } from './mercadopago.ts';
 // BillingPlan es el mismo tipo en los tres módulos; lo importamos de Stripe.
 type BillingProvider = 'mercadopago' | 'paddle' | 'stripe' | 'simulado';
 
@@ -1047,7 +1047,7 @@ app.post('/api/billing/webhook/paddle', async (req, res) => {
 app.post('/api/billing/webhook/mp', async (req, res) => {
   if (!mpEnabled()) return res.status(404).json({ error: 'MercadoPago no configurado' });
   const raw = (req as any).rawBody as Buffer | undefined;
-  const event = verifyWebhookSignature(raw ?? Buffer.alloc(0), req.headers['x-signature'] as string | undefined);
+  const event = mpVerifyWebhook(raw ?? Buffer.alloc(0), req.headers['x-signature'] as string | undefined);
   if (!event) return res.status(400).json({ error: 'Formato de IPN inválido' });
   try {
     switch (event.topic) {
