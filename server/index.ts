@@ -793,7 +793,9 @@ app.post('/api/billing/cancel', requireAuth, h(async (req: AuthedRequest, res) =
     if (!s?.preapproval_id) return res.status(404).json({ error: 'No tenés una suscripción activa para cancelar' });
     try {
       await mpCancel(s.preapproval_id);
-      return res.json({ ok: true, message: 'Suscripción cancelada. Conservás Premium hasta el fin del período ya pagado.' });
+      // Degradamos localmente sin esperar el webhook (que puede no estar configurado).
+      await run(`UPDATE users SET plan = 'free', premium_until = NULL WHERE id = $1`, [req.userId!]);
+      return res.json({ ok: true, message: 'Suscripción cancelada. Ya no se te cobrará más.' });
     } catch (err: any) {
       return res.status(502).json({ error: err?.message ?? 'No se pudo cancelar la suscripción' });
     }
