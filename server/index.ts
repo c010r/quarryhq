@@ -1064,6 +1064,17 @@ app.post('/api/billing/webhook/mp', async (req, res) => {
           const until = new Date(Date.now() + PREMIUM_DAYS * 24 * 60 * 60 * 1000).toISOString();
           await run('UPDATE users SET plan = $1, premium_until = $2 WHERE id = $3', [plan, until, userId]);
           await run('UPDATE mercadopago_subs SET plan = $1 WHERE user_id = $2', [plan, userId]);
+          // Mail de confirmación al usuario
+          const u = await get<{ email: string | null; username: string }>('SELECT email, username FROM users WHERE id = $1', [userId]);
+          if (u?.email) {
+            const planLabel = plan === 'team' ? 'Equipos' : 'Individual';
+            const dias = (pa.auto_recurring?.frequency ?? 1) * (pa.auto_recurring?.frequency_type === 'months' ? 30 : pa.auto_recurring?.frequency_type === 'days' ? 1 : 30);
+            sendMail(u.email, `Tu suscripción ${planLabel} en QuarryHQ está activa`,
+              `<p>Hola @${u.username},</p>
+               <p>Tu suscripción <strong>${planLabel}</strong> en QuarryHQ está activa por ${dias} días. ¡Gracias por confiar en nosotros!</p>
+               <p><a href="${APP_URL}">Ir a QuarryHQ</a></p>`)
+              .catch((err: unknown) => console.error('Error enviando mail de confirmación:', err));
+          }
         }
         break;
       }
